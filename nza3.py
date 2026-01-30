@@ -14,12 +14,15 @@ from firebase_admin import credentials, firestore
 # Auto-refresh
 from streamlit_autorefresh import st_autorefresh
 
-# Page config
+# Page config - Check if customer (has store in URL)
+query_params_check = st.query_params
+is_customer_view = "store" in query_params_check
+
 st.set_page_config(
     page_title="QR Code Menu System",
     page_icon="📱",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed" if is_customer_view else "expanded"
 )
 
 # ============================================
@@ -372,14 +375,31 @@ def main():
     db_id = id(db)
     stores = load_stores(db_id)
     
-    # ============================================
-    # SIDEBAR
-    # ============================================
-    st.sidebar.title("📱 QR Code Menu System")
-    st.sidebar.caption("⚡ Powered by Firebase")
-    
+    # Check if customer view (QR scan)
     query_params = st.query_params
     url_store_id = query_params.get("store", None)
+    is_customer_mode = url_store_id is not None and not st.session_state.is_admin
+    
+    # Hide sidebar for customers
+    if is_customer_mode:
+        st.markdown("""
+        <style>
+        [data-testid="stSidebar"] {
+            display: none;
+        }
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    
+    # ============================================
+    # SIDEBAR (Admin only)
+    # ============================================
+    if not is_customer_mode:
+        st.sidebar.title("📱 QR Code Menu System")
+        st.sidebar.caption("⚡ Powered by Firebase")
+    
     url_table = query_params.get("table", None)
     
     if url_table:
@@ -402,23 +422,25 @@ def main():
                     index=list(store_options.keys()).index(current_store['store_name'])
                 )
                 current_store = store_options[selected_store_name]
-            else:
-                st.sidebar.markdown(f"### 🏪 {current_store['store_name']}")
+            # Customer mode - no sidebar needed
         else:
-            selected_store_name = st.sidebar.selectbox(
-                "🏪 ဆိုင်ရွေးပါ",
-                options=list(store_options.keys())
-            )
-            current_store = store_options[selected_store_name]
+            if not is_customer_mode:
+                selected_store_name = st.sidebar.selectbox(
+                    "🏪 ဆိုင်ရွေးပါ",
+                    options=list(store_options.keys())
+                )
+                current_store = store_options[selected_store_name]
         
         st.session_state.current_store = current_store
     else:
-        st.sidebar.info("ဆိုင်မရှိသေးပါ။")
+        if not is_customer_mode:
+            st.sidebar.info("ဆိုင်မရှိသေးပါ။")
     
-    st.sidebar.divider()
+    if not is_customer_mode:
+        st.sidebar.divider()
     
-    # Admin Login
-    if not st.session_state.is_admin:
+    # Admin Login (sidebar only for non-customer mode)
+    if not st.session_state.is_admin and not is_customer_mode:
         if store_from_url:
             with st.sidebar.expander("🔐 Admin Login", expanded=False):
                 admin_key = st.text_input("Password", type="password", key="admin_pwd")
@@ -469,67 +491,7 @@ def main():
             st.session_state.view_mode = 'menu'
             st.rerun()
     
-    # Customer Cart in Sidebar
-    if not st.session_state.is_admin and current_store and st.session_state.cart:
-        st.sidebar.divider()
-        st.sidebar.subheader("🛒 မှာထားသောပစ္စည်းများ")
-        
-        total = 0
-        for i, item in enumerate(st.session_state.cart):
-            price = parse_price(item['price'])
-            total += price * item['qty']
-            
-            col1, col2, col3 = st.sidebar.columns([3, 1, 1])
-            with col1:
-                st.write(f"{item['name']}")
-                st.caption(f"{item['price']} x {item['qty']}")
-            with col2:
-                if st.button("➖", key=f"minus_{i}"):
-                    if st.session_state.cart[i]['qty'] > 1:
-                        st.session_state.cart[i]['qty'] -= 1
-                    else:
-                        st.session_state.cart.pop(i)
-                    st.rerun()
-            with col3:
-                if st.button("➕", key=f"plus_{i}"):
-                    st.session_state.cart[i]['qty'] += 1
-                    st.rerun()
-        
-        st.sidebar.divider()
-        st.sidebar.markdown(f"### 💰 Total: {format_price(total)} Ks")
-        
-        # Table Number
-        table_no = st.sidebar.text_input("🪑 စားပွဲနံပါတ်", value=st.session_state.table_no, placeholder="ဥပမာ: 5")
-        st.session_state.table_no = table_no
-        
-        if st.sidebar.button("📤 Order ပို့မည်", use_container_width=True, type="primary"):
-            if not table_no:
-                st.sidebar.error("⚠️ စားပွဲနံပါတ် ထည့်ပါ")
-            else:
-                # Save order - FAST with Firebase!
-                items_str = " | ".join([f"{item['name']} x{item['qty']}" for item in st.session_state.cart])
-                
-                with st.spinner("📤 Order ပို့နေပါသည်..."):
-                    order_id = save_order(db, current_store['store_id'], {
-                        'table_no': table_no,
-                        'items': items_str,
-                        'total': str(total)
-                    })
-                
-                # Save order success info for alert
-                st.session_state.order_success = {
-                    'order_id': order_id,
-                    'table_no': table_no,
-                    'total': total,
-                    'items': items_str
-                }
-                st.session_state.cart = []
-                st.balloons()
-                st.rerun()
-        
-        if st.sidebar.button("🗑️ Cart ရှင်းမည်", use_container_width=True):
-            st.session_state.cart = []
-            st.rerun()
+    # Customer Cart - moved to bottom of page for customer mode (see below in main content)
     
     # Admin Controls
     if st.session_state.is_admin and st.session_state.view_mode == 'menu':
@@ -990,25 +952,26 @@ def main():
                                 if st.button("🗑️", key=f"d_{item['item_id']}"):
                                     delete_menu_item(db, store_id, item['item_id'])
                                     st.rerun()
-                            else:
-                                # Add to cart button for customers
-                                if st.button("Order", key=f"add_{item['item_id']}", use_container_width=True, type="primary"):
-                                    # Check if item already in cart
-                                    found = False
-                                    for cart_item in st.session_state.cart:
-                                        if cart_item['item_id'] == item['item_id']:
-                                            cart_item['qty'] += 1
-                                            found = True
-                                            break
-                                    
-                                    if not found:
-                                        st.session_state.cart.append({
-                                            'item_id': item['item_id'],
-                                            'name': item['name'],
-                                            'price': item['price'],
-                                            'qty': 1
-                                        })
-                                    st.rerun()
+                        
+                        # Order button - full width for customers
+                        if not st.session_state.is_admin:
+                            if st.button(f"🛒 Order", key=f"add_{item['item_id']}", use_container_width=True, type="primary"):
+                                # Check if item already in cart
+                                found = False
+                                for cart_item in st.session_state.cart:
+                                    if cart_item['item_id'] == item['item_id']:
+                                        cart_item['qty'] += 1
+                                        found = True
+                                        break
+                                
+                                if not found:
+                                    st.session_state.cart.append({
+                                        'item_id': item['item_id'],
+                                        'name': item['name'],
+                                        'price': item['price'],
+                                        'qty': 1
+                                    })
+                                st.rerun()
                         
                         # Edit form for admin
                         if st.session_state.is_admin and st.session_state.editing_id == item['item_id']:
@@ -1032,6 +995,85 @@ def main():
                                     if st.form_submit_button("❌ ပယ်", use_container_width=True):
                                         st.session_state.editing_id = None
                                         st.rerun()
+    
+    # ============================================
+    # CUSTOMER CART (Bottom of page for mobile)
+    # ============================================
+    if is_customer_mode and st.session_state.cart:
+        st.divider()
+        st.markdown("### 🛒 မှာထားသောပစ္စည်းများ")
+        
+        total = 0
+        for i, item in enumerate(st.session_state.cart):
+            price = parse_price(item['price'])
+            total += price * item['qty']
+            
+            with st.container(border=True):
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                with col1:
+                    st.write(f"**{item['name']}**")
+                    st.caption(f"{item['price']} Ks")
+                with col2:
+                    if st.button("➖", key=f"minus_{i}", use_container_width=True):
+                        if st.session_state.cart[i]['qty'] > 1:
+                            st.session_state.cart[i]['qty'] -= 1
+                        else:
+                            st.session_state.cart.pop(i)
+                        st.rerun()
+                with col3:
+                    st.markdown(f"<div style='text-align:center; font-size:1.2em; padding-top:5px;'><b>{item['qty']}</b></div>", unsafe_allow_html=True)
+                with col4:
+                    if st.button("➕", key=f"plus_{i}", use_container_width=True):
+                        st.session_state.cart[i]['qty'] += 1
+                        st.rerun()
+        
+        # Total and Order Section
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #2E86AB 0%, #1a5276 100%); 
+                    padding: 15px; border-radius: 10px; text-align: center; margin: 15px 0;">
+            <div style="color: #fff; font-size: 1.5em; font-weight: bold;">
+                💰 Total: {format_price(total)} Ks
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Table Number
+        if not st.session_state.table_no:
+            table_no = st.text_input("🪑 စားပွဲနံပါတ် ထည့်ပါ", placeholder="ဥပမာ: 5", key="table_input")
+            st.session_state.table_no = table_no
+        else:
+            st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🗑️ Cart ရှင်းမည်", use_container_width=True):
+                st.session_state.cart = []
+                st.rerun()
+        with col2:
+            if st.button("📤 Order ပို့မည်", use_container_width=True, type="primary"):
+                if not st.session_state.table_no:
+                    st.error("⚠️ စားပွဲနံပါတ် ထည့်ပါ")
+                else:
+                    # Save order - FAST with Firebase!
+                    items_str = " | ".join([f"{item['name']} x{item['qty']}" for item in st.session_state.cart])
+                    
+                    with st.spinner("📤 Order ပို့နေပါသည်..."):
+                        order_id = save_order(db, current_store['store_id'], {
+                            'table_no': st.session_state.table_no,
+                            'items': items_str,
+                            'total': str(total)
+                        })
+                    
+                    # Save order success info for alert
+                    st.session_state.order_success = {
+                        'order_id': order_id,
+                        'table_no': st.session_state.table_no,
+                        'total': total,
+                        'items': items_str
+                    }
+                    st.session_state.cart = []
+                    st.balloons()
+                    st.rerun()
     
     st.divider()
     st.caption("📱 QR Code Menu System | ⚡ Powered by Firebase")
