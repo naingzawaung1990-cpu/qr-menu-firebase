@@ -1,0 +1,5 @@
+streamlit
+firebase-admin
+qrcode
+Pillow
+streamlit-autorefresh
