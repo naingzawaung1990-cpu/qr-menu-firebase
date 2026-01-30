@@ -380,7 +380,7 @@ def main():
     url_store_id = query_params.get("store", None)
     is_customer_mode = url_store_id is not None and not st.session_state.is_admin
     
-    # Hide sidebar for customers
+    # Hide sidebar for customers + Custom button styling
     if is_customer_mode:
         st.markdown("""
         <style>
@@ -389,6 +389,33 @@ def main():
         }
         [data-testid="stSidebarCollapsedControl"] {
             display: none;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    
+    # Custom styling for customers
+    if not st.session_state.is_admin:
+        st.markdown("""
+        <style>
+        /* Make all buttons compact */
+        button {
+            padding: 5px 12px !important;
+            min-height: 0 !important;
+            height: auto !important;
+            border-radius: 8px !important;
+        }
+        button p {
+            font-size: 14px !important;
+            margin: 0 !important;
+        }
+        /* Green gradient for primary buttons (Order buttons) */
+        button[kind="primary"] {
+            background: linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%) !important;
+            border: none !important;
+            border-radius: 20px !important;
+        }
+        button[kind="primary"]:hover {
+            background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
         }
         </style>
         """, unsafe_allow_html=True)
@@ -938,40 +965,45 @@ def main():
             for idx, item in enumerate(cat_items):
                 with cols[idx % 2]:
                     with st.container(border=True):
-                        col1, col2 = st.columns([3, 1])
-                        
-                        with col1:
-                            st.markdown(f"**{item['name']}**")
-                            st.markdown(f"💰 {item['price']} Ks")
-                        
-                        with col2:
-                            if st.session_state.is_admin:
+                        if st.session_state.is_admin:
+                            # Admin view
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                st.markdown(f"**{item['name']}**")
+                                st.markdown(f"💰 {item['price']} Ks")
+                            with col2:
                                 if st.button("✏️", key=f"e_{item['item_id']}"):
                                     st.session_state.editing_id = item['item_id']
                                     st.rerun()
                                 if st.button("🗑️", key=f"d_{item['item_id']}"):
                                     delete_menu_item(db, store_id, item['item_id'])
                                     st.rerun()
-                        
-                        # Order button - full width for customers
-                        if not st.session_state.is_admin:
-                            if st.button(f"🛒 Order", key=f"add_{item['item_id']}", use_container_width=True, type="primary"):
-                                # Check if item already in cart
-                                found = False
-                                for cart_item in st.session_state.cart:
-                                    if cart_item['item_id'] == item['item_id']:
-                                        cart_item['qty'] += 1
-                                        found = True
-                                        break
-                                
-                                if not found:
-                                    st.session_state.cart.append({
-                                        'item_id': item['item_id'],
-                                        'name': item['name'],
-                                        'price': item['price'],
-                                        'qty': 1
-                                    })
-                                st.rerun()
+                        else:
+                            # Customer view - Order button on the side (compact)
+                            col1, col2 = st.columns([3, 2])
+                            with col1:
+                                st.markdown(f"**{item['name']}**")
+                                st.markdown(f"💰 {item['price']} Ks")
+                            with col2:
+                                # Green gradient Order button (type=primary)
+                                button_clicked = st.button("Order ➤", key=f"add_{item['item_id']}", type="primary")
+                                if button_clicked:
+                                    # Check if item already in cart
+                                    found = False
+                                    for cart_item in st.session_state.cart:
+                                        if cart_item['item_id'] == item['item_id']:
+                                            cart_item['qty'] += 1
+                                            found = True
+                                            break
+                                    
+                                    if not found:
+                                        st.session_state.cart.append({
+                                            'item_id': item['item_id'],
+                                            'name': item['name'],
+                                            'price': item['price'],
+                                            'qty': 1
+                                        })
+                                    st.rerun()
                         
                         # Edit form for admin
                         if st.session_state.is_admin and st.session_state.editing_id == item['item_id']:
@@ -999,7 +1031,7 @@ def main():
     # ============================================
     # CUSTOMER CART (Bottom of page for mobile)
     # ============================================
-    if is_customer_mode and st.session_state.cart:
+    if not st.session_state.is_admin and st.session_state.cart:
         st.divider()
         st.markdown("### 🛒 မှာထားသောပစ္စည်းများ")
         
@@ -1053,6 +1085,8 @@ def main():
             if st.button("📤 Order ပို့မည်", use_container_width=True, type="primary"):
                 if not st.session_state.table_no:
                     st.error("⚠️ စားပွဲနံပါတ် ထည့်ပါ")
+                elif not current_store:
+                    st.error("⚠️ ဆိုင်ရွေးပါ")
                 else:
                     # Save order - FAST with Firebase!
                     items_str = " | ".join([f"{item['name']} x{item['qty']}" for item in st.session_state.cart])
