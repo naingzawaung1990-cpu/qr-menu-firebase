@@ -419,32 +419,41 @@ def main():
         }
         
         /* ============================================ */
-        /* FORCE HORIZONTAL LAYOUT ON MOBILE */
+        /* Hide marker divs */
         /* ============================================ */
-        /* Force all column containers to stay horizontal on mobile */
-        div[data-testid="stHorizontalBlock"] {
+        .cart-order-marker, .cart-item-marker {
+            display: none;
+        }
+        
+        /* ============================================ */
+        /* Cart Item Buttons - Force Horizontal on Mobile */
+        /* ============================================ */
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] {
             flex-wrap: nowrap !important;
             flex-direction: row !important;
+            gap: 5px !important;
         }
-        div[data-testid="stHorizontalBlock"] > div {
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div {
+            flex: none !important;
             width: auto !important;
-            flex: 1 !important;
+            min-width: 0 !important;
+        }
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div:first-child {
+            flex: 2 !important;
         }
         
         /* ============================================ */
         /* Adjacent Cart & Order buttons - ဘောင်ကပ်လျက် */
         /* ============================================ */
-        /* Hide the marker div */
-        .cart-order-marker {
-            display: none;
-        }
-        /* Target the button row after marker - remove gap */
         .cart-order-marker + div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            flex-direction: row !important;
             gap: 0 !important;
         }
         .cart-order-marker + div[data-testid="stHorizontalBlock"] > div {
             padding-left: 0 !important;
             padding-right: 0 !important;
+            flex: 1 !important;
         }
         /* Cart button - left rounded, white with border */
         .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button {
@@ -1090,11 +1099,15 @@ def main():
             total += price * item['qty']
             
             with st.container(border=True):
-                # Added cancel button next to +/- buttons
-                col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1.5])
-                with col1:
-                    st.write(f"**{item['name']}**")
-                    st.caption(f"{item['price']} Ks")
+                # Item name and price
+                st.write(f"**{item['name']}**")
+                st.caption(f"{item['price']} Ks")
+                
+                # Marker for horizontal layout on mobile
+                st.markdown('<div class="cart-item-marker"></div>', unsafe_allow_html=True)
+                
+                # Buttons row: ➖ qty ➕ cancel
+                col2, col3, col4, col5 = st.columns([1, 1, 1, 1.5])
                 with col2:
                     if st.button("➖", key=f"minus_{i}", use_container_width=True):
                         if st.session_state.cart[i]['qty'] > 1:
