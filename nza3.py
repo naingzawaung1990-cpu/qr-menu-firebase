@@ -728,7 +728,7 @@ def main():
         
         # Auto-refresh using streamlit-autorefresh
         if st.session_state.auto_refresh:
-            # Auto refresh every 10 seconds (10000 ms)
+            # Auto refresh every 10 seconds (30000 ms)
             refresh_count = st_autorefresh(interval=10000, limit=None, key="dashboard_refresh")
             if refresh_count > 0:
                 load_orders.clear()  # Clear cache on refresh
