@@ -417,6 +417,42 @@ def main():
         button[kind="primary"]:hover {
             background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
         }
+        
+        /* ============================================ */
+        /* Adjacent Cart & Order buttons - ဘောင်ကပ်လျက် */
+        /* ============================================ */
+        /* Hide the marker div */
+        .cart-order-marker {
+            display: none;
+        }
+        /* Target the button row after marker - remove gap */
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] {
+            gap: 0 !important;
+        }
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div {
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+        }
+        /* Cart button - left rounded, white with border */
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button {
+            border-radius: 25px 0 0 25px !important;
+            border: 1px solid #ccc !important;
+            border-right: none !important;
+            background: #fff !important;
+            color: #333 !important;
+        }
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button:hover {
+            background: #f5f5f5 !important;
+        }
+        /* Order button - right rounded, green gradient */
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button {
+            border-radius: 0 25px 25px 0 !important;
+            background: linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%) !important;
+            border: none !important;
+        }
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button:hover {
+            background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
+        }
         </style>
         """, unsafe_allow_html=True)
     
@@ -728,11 +764,11 @@ def main():
         
         # Auto-refresh using streamlit-autorefresh
         if st.session_state.auto_refresh:
-            # Auto refresh every 10 seconds (30000 ms)
+            # Auto refresh every 10 seconds (10000 ms)
             refresh_count = st_autorefresh(interval=10000, limit=None, key="dashboard_refresh")
             if refresh_count > 0:
                 load_orders.clear()  # Clear cache on refresh
-            st.caption(f"🟢 Auto-refresh ON (30s) | Refresh #{refresh_count}")
+            st.caption(f"🟢 Auto-refresh ON (10s) | Refresh #{refresh_count}")
         else:
             st.caption("🔴 Auto-refresh OFF - Manual refresh သာ")
         
@@ -1041,7 +1077,8 @@ def main():
             total += price * item['qty']
             
             with st.container(border=True):
-                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                # Added cancel button next to +/- buttons
+                col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1.5])
                 with col1:
                     st.write(f"**{item['name']}**")
                     st.caption(f"{item['price']} Ks")
@@ -1057,6 +1094,11 @@ def main():
                 with col4:
                     if st.button("➕", key=f"plus_{i}", use_container_width=True):
                         st.session_state.cart[i]['qty'] += 1
+                        st.rerun()
+                with col5:
+                    # Cancel button for this item
+                    if st.button("cancel", key=f"remove_{i}", use_container_width=True):
+                        st.session_state.cart.pop(i)
                         st.rerun()
         
         # Total and Order Section
@@ -1076,38 +1118,48 @@ def main():
         else:
             st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🗑️ Cart ရှင်းမည်", use_container_width=True):
-                st.session_state.cart = []
-                st.rerun()
-        with col2:
-            if st.button("📤 Order ပို့မည်", use_container_width=True, type="primary"):
-                if not st.session_state.table_no:
-                    st.error("⚠️ စားပွဲနံပါတ် ထည့်ပါ")
-                elif not current_store:
-                    st.error("⚠️ ဆိုင်ရွေးပါ")
-                else:
-                    # Save order - FAST with Firebase!
-                    items_str = " | ".join([f"{item['name']} x{item['qty']}" for item in st.session_state.cart])
-                    
-                    with st.spinner("📤 Order ပို့နေပါသည်..."):
-                        order_id = save_order(db, current_store['store_id'], {
-                            'table_no': st.session_state.table_no,
-                            'items': items_str,
-                            'total': str(total)
-                        })
-                    
-                    # Save order success info for alert
-                    st.session_state.order_success = {
-                        'order_id': order_id,
+        # ============================================
+        # ADJACENT BUTTONS (Cart Clear & Order) - ဘောင်ကပ်လျက်ပြ
+        # ============================================
+        # Marker div to identify these buttons
+        st.markdown('<div class="cart-order-marker"></div>', unsafe_allow_html=True)
+        
+        cart_col, order_col = st.columns(2)
+        with cart_col:
+            cart_clear = st.button("🗑️ Cart ရှင်းမည်", use_container_width=True, key="cart_clear_btn")
+        with order_col:
+            order_submit = st.button("📤 Order ပို့မည်", use_container_width=True, type="primary", key="order_submit_btn")
+        
+        if cart_clear:
+            st.session_state.cart = []
+            st.rerun()
+        
+        if order_submit:
+            if not st.session_state.table_no:
+                st.error("⚠️ စားပွဲနံပါတ် ထည့်ပါ")
+            elif not current_store:
+                st.error("⚠️ ဆိုင်ရွေးပါ")
+            else:
+                # Save order - FAST with Firebase!
+                items_str = " | ".join([f"{item['name']} x{item['qty']}" for item in st.session_state.cart])
+                
+                with st.spinner("📤 Order ပို့နေပါသည်..."):
+                    order_id = save_order(db, current_store['store_id'], {
                         'table_no': st.session_state.table_no,
-                        'total': total,
-                        'items': items_str
-                    }
-                    st.session_state.cart = []
-                    st.balloons()
-                    st.rerun()
+                        'items': items_str,
+                        'total': str(total)
+                    })
+                
+                # Save order success info for alert
+                st.session_state.order_success = {
+                    'order_id': order_id,
+                    'table_no': st.session_state.table_no,
+                    'total': total,
+                    'items': items_str
+                }
+                st.session_state.cart = []
+                st.balloons()
+                st.rerun()
     
     st.divider()
     st.caption("📱 QR Code Menu System | ⚡ Powered by Firebase")
