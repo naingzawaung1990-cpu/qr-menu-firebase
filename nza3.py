@@ -419,6 +419,19 @@ def main():
         }
         
         /* ============================================ */
+        /* FORCE HORIZONTAL LAYOUT ON MOBILE */
+        /* ============================================ */
+        /* Force all column containers to stay horizontal on mobile */
+        div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            flex-direction: row !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div {
+            width: auto !important;
+            flex: 1 !important;
+        }
+        
+        /* ============================================ */
         /* Adjacent Cart & Order buttons - ဘောင်ကပ်လျက် */
         /* ============================================ */
         /* Hide the marker div */
