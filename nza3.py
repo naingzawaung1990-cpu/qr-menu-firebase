@@ -732,7 +732,7 @@ def main():
             refresh_count = st_autorefresh(interval=10000, limit=None, key="dashboard_refresh")
             if refresh_count > 0:
                 load_orders.clear()  # Clear cache on refresh
-            st.caption(f"🟢 Auto-refresh ON (10s) | Refresh #{refresh_count}")
+            st.caption(f"🟢 Auto-refresh ON (30s) | Refresh #{refresh_count}")
         else:
             st.caption("🔴 Auto-refresh OFF - Manual refresh သာ")
         
