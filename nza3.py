@@ -1365,6 +1365,61 @@ def main():
                             children[i].style.minWidth = '0';
                         }}
                     }}
+                    
+                    // Cart & Order buttons - separate borders, small gap, left aligned
+                    if (html.indexOf('Cart') !== -1 && html.indexOf('Order') !== -1) {{
+                        block.style.display = 'flex';
+                        block.style.flexWrap = 'nowrap';
+                        block.style.gap = '10px';
+                        block.style.justifyContent = 'flex-start';
+                        
+                        var children = block.children;
+                        for (var i = 0; i < children.length; i++) {{
+                            children[i].style.flex = 'none';
+                            children[i].style.width = 'auto';
+                            children[i].style.padding = '0';
+                            children[i].style.minWidth = '0';
+                        }}
+                    }}
+                }});
+                
+                // Style Cart & Order buttons - separate borders, same size
+                doc.querySelectorAll('button').forEach(function(btn) {{
+                    var text = btn.textContent || btn.innerText || '';
+                    
+                    // Cart button - fully rounded, own border
+                    if (text.indexOf('Cart') !== -1) {{
+                        btn.style.setProperty('background', '#f0f2f6', 'important');
+                        btn.style.setProperty('color', '#333', 'important');
+                        btn.style.setProperty('border', '2px solid #333', 'important');
+                        btn.style.setProperty('border-radius', '25px', 'important');
+                        btn.style.setProperty('padding', '12px 25px', 'important');
+                        btn.style.setProperty('min-width', '160px', 'important');
+                        btn.style.setProperty('min-height', '50px', 'important');
+                        btn.style.setProperty('font-weight', 'bold', 'important');
+                        var pTag = btn.querySelector('p');
+                        if (pTag) {{
+                            pTag.style.setProperty('font-weight', 'bold', 'important');
+                            pTag.style.setProperty('color', '#333', 'important');
+                        }}
+                    }}
+                    
+                    // Order button - fully rounded, own border
+                    if (text.indexOf('Order') !== -1) {{
+                        btn.style.setProperty('background', 'linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%)', 'important');
+                        btn.style.setProperty('color', 'white', 'important');
+                        btn.style.setProperty('border', '2px solid #333', 'important');
+                        btn.style.setProperty('border-radius', '25px', 'important');
+                        btn.style.setProperty('padding', '12px 25px', 'important');
+                        btn.style.setProperty('min-width', '160px', 'important');
+                        btn.style.setProperty('min-height', '50px', 'important');
+                        btn.style.setProperty('font-weight', 'bold', 'important');
+                        var pTag = btn.querySelector('p');
+                        if (pTag) {{
+                            pTag.style.setProperty('font-weight', 'bold', 'important');
+                            pTag.style.setProperty('color', 'white', 'important');
+                        }}
+                    }}
                 }});
             }}
             
@@ -1395,16 +1450,18 @@ def main():
             st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
         
         # ============================================
-        # ADJACENT BUTTONS (Cart Clear & Order) - ဘောင်ကပ်လျက်ပြ
+        # ADJACENT BUTTONS (Cart Clear & Order) - ဘောင်ကပ်လျက်ပြ, ဘယ်ဘက်
         # ============================================
         # Marker div to identify these buttons
         st.markdown('<div class="cart-order-marker"></div>', unsafe_allow_html=True)
         
-        cart_col, order_col = st.columns(2)
+        cart_col, order_col, empty_col = st.columns([1, 1, 1])
         with cart_col:
             cart_clear = st.button("🗑️ Cart ရှင်းမည်", use_container_width=True, key="cart_clear_btn")
         with order_col:
             order_submit = st.button("📤 Order ပို့မည်", use_container_width=True, type="primary", key="order_submit_btn")
+        with empty_col:
+            st.empty()
         
         if cart_clear:
             st.session_state.cart = []
