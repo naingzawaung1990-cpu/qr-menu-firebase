@@ -136,6 +136,7 @@ def save_store(db, store_data):
         'subtitle': store_data.get('subtitle', 'Food & Drinks'),
         'bg_color': store_data.get('bg_color', ''),
         'bg_image': store_data.get('bg_image', ''),
+        'bg_counter': store_data.get('bg_counter', False),
         'created_at': firestore.SERVER_TIMESTAMP
     })
     clear_all_cache()
@@ -148,7 +149,8 @@ def update_store(db, store_id, new_data):
         'logo': new_data.get('logo', '☕'),
         'subtitle': new_data.get('subtitle', 'Food & Drinks'),
         'bg_color': new_data.get('bg_color', ''),
-        'bg_image': new_data.get('bg_image', '')
+        'bg_image': new_data.get('bg_image', ''),
+        'bg_counter': new_data.get('bg_counter', False)
     })
     clear_all_cache()
 
@@ -858,6 +860,7 @@ def main():
                         st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
                         edit_bg_color = st.color_picker("Background Color", value=current_store.get('bg_color', '#ffffff') or '#ffffff')
                         edit_bg_image = st.text_input("Background Image URL", value=current_store.get('bg_image', ''), placeholder="https://example.com/image.jpg")
+                        edit_bg_counter = st.checkbox("Counter Dashboard မှာလည်း Background ပြောင်းမယ်", value=current_store.get('bg_counter', False))
                         st.caption("💡 Image ထည့်ရင် Color ထက် Image ကို ဦးစားပေးမယ်")
                         
                         if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
@@ -867,7 +870,8 @@ def main():
                                 'logo': edit_logo.strip() or '☕',
                                 'subtitle': edit_subtitle.strip() or 'Food & Drinks',
                                 'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
-                                'bg_image': edit_bg_image.strip()
+                                'bg_image': edit_bg_image.strip(),
+                                'bg_counter': edit_bg_counter
                             })
                             st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
                             st.rerun()
@@ -967,6 +971,43 @@ def main():
     
     # Counter Dashboard View
     if st.session_state.is_admin and st.session_state.view_mode == 'counter':
+        
+        # Apply background if enabled for Counter Dashboard
+        if current_store.get('bg_counter', False):
+            bg_image_url = current_store.get('bg_image', '')
+            bg_color = current_store.get('bg_color', '')
+            
+            if bg_image_url:
+                st.markdown(f"""
+                <style>
+                .stApp {{
+                    background-image: url("{bg_image_url}");
+                    background-size: cover;
+                    background-position: center;
+                    background-repeat: no-repeat;
+                    background-attachment: fixed;
+                }}
+                .stApp::before {{
+                    content: "";
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(255, 255, 255, 0.85);
+                    z-index: -1;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+            elif bg_color:
+                st.markdown(f"""
+                <style>
+                .stApp {{
+                    background-color: {bg_color} !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+        
         st.title("🖥️ Counter Dashboard")
         st.subheader(f"📍 {current_store['store_name']}")
         
