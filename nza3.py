@@ -1248,7 +1248,7 @@ def main():
                 ''', unsafe_allow_html=True)
                 
                 # Quantity control: ➖ [qty] ➕ 🗑️ - aligned left, same size
-                b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1, 3])
+                b1, b2, b3, b4, b5, b6 = st.columns([1, 1, 1, 0.3, 1, 2.7])
                 with b1:
                     minus_clicked = st.button("➖", key=f"minus_{i}", use_container_width=True)
                 with b2:
@@ -1264,8 +1264,10 @@ def main():
                 with b3:
                     plus_clicked = st.button("➕", key=f"plus_{i}", use_container_width=True)
                 with b4:
-                    del_clicked = st.button("🗑️", key=f"remove_{i}", use_container_width=True)
+                    st.empty()  # Spacer between + and delete
                 with b5:
+                    del_clicked = st.button("🗑️", key=f"remove_{i}", use_container_width=True)
+                with b6:
                     st.empty()
                 
                 # Handle button clicks
