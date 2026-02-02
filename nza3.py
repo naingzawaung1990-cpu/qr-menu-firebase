@@ -1318,7 +1318,7 @@ def main():
                 doc.querySelectorAll('button').forEach(function(btn) {{
                     var text = btn.textContent || btn.innerText || '';
                     
-                    // ➖ ➕ buttons - no color (default/transparent)
+                    // ➖ ➕ buttons - no color (default/light grey)
                     if (text.indexOf('➖') !== -1 || text.indexOf('➕') !== -1) {{
                         btn.style.setProperty('background', '#f0f2f6', 'important');
                         btn.style.setProperty('color', '#333', 'important');
@@ -1329,15 +1329,22 @@ def main():
                         btn.style.setProperty('font-size', '18px', 'important');
                     }}
                     
-                    // Cancel button - Red
+                    // Cancel button - bold text
                     if (text.indexOf('Cancel') !== -1) {{
-                        btn.style.setProperty('background', '{delete_color}', 'important');
-                        btn.style.setProperty('color', 'white', 'important');
-                        btn.style.setProperty('border', 'none', 'important');
+                        btn.style.setProperty('background', '#f0f2f6', 'important');
+                        btn.style.setProperty('color', '#333', 'important');
+                        btn.style.setProperty('border', '1px solid #ccc', 'important');
                         btn.style.setProperty('border-radius', '12px', 'important');
                         btn.style.setProperty('min-height', '48px', 'important');
                         btn.style.setProperty('min-width', '50px', 'important');
                         btn.style.setProperty('font-size', '16px', 'important');
+                        btn.style.setProperty('font-weight', 'bold', 'important');
+                        // Also style the p element inside button
+                        var pTag = btn.querySelector('p');
+                        if (pTag) {{
+                            pTag.style.setProperty('font-weight', 'bold', 'important');
+                            pTag.style.setProperty('color', '#333', 'important');
+                        }}
                     }}
                 }});
                 
