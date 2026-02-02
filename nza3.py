@@ -1285,7 +1285,7 @@ def main():
                 with b4:
                     st.empty()  # Spacer between + and delete
                 with b5:
-                    del_clicked = st.button("🗑️", key=f"remove_{i}", use_container_width=True)
+                    del_clicked = st.button("Cancel", key=f"remove_{i}", use_container_width=True)
                 with b6:
                     st.empty()
                 
@@ -1329,8 +1329,8 @@ def main():
                         btn.style.setProperty('font-size', '18px', 'important');
                     }}
                     
-                    // 🗑️ Delete button - Red
-                    if (text.indexOf('🗑') !== -1) {{
+                    // Cancel button - Red
+                    if (text.indexOf('Cancel') !== -1) {{
                         btn.style.setProperty('background', '{delete_color}', 'important');
                         btn.style.setProperty('color', 'white', 'important');
                         btn.style.setProperty('border', 'none', 'important');
