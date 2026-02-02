@@ -440,23 +440,34 @@ def main():
         }
         
         /* ============================================ */
-        /* ADD Button - Orange style */
+        /* ADD buttons - Orange style */
         /* ============================================ */
-        button[kind="primary"] {
+        button[kind="secondary"] {
             background: #FF5722 !important;
             border: none !important;
             border-radius: 8px !important;
             padding: 8px 20px !important;
             color: #fff !important;
             font-weight: 600 !important;
-            font-size: 14px !important;
+            font-size: 16px !important;
+            min-width: auto !important;
         }
-        button[kind="primary"]:hover {
+        button[kind="secondary"]:hover {
             background: #E64A19 !important;
         }
-        button[kind="primary"] p {
+        button[kind="secondary"] p {
             color: #fff !important;
             font-weight: 600 !important;
+            font-size: 16px !important;
+        }
+        /* Primary buttons - green */
+        button[kind="primary"] {
+            background: linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%) !important;
+            border: none !important;
+            border-radius: 20px !important;
+        }
+        button[kind="primary"]:hover {
+            background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
         }
         /* Item container style */
         div[data-testid="stVerticalBlock"] > div[data-testid="element-container"] > div[data-testid="stContainer"] {
@@ -467,7 +478,7 @@ def main():
         /* ============================================ */
         /* Hide marker divs */
         /* ============================================ */
-        .cart-order-marker, .cart-item-marker, .menu-item-marker {
+        .cart-order-marker, .cart-item-marker, .menu-item-marker, .qty-btn-marker {
             display: none;
         }
         
@@ -560,6 +571,7 @@ def main():
         .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button:hover {
             background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
         }
+        
         
         /* ============================================ */
         /* 3-Column Category Layout Styling */
@@ -1135,10 +1147,15 @@ def main():
                         # Items in this category (vertical list)
                         for item in cat_items:
                             if st.session_state.is_admin:
-                                # Admin view - with border
+                                # Admin view - with border, item...dots...price
                                 with st.container(border=True):
-                                    st.markdown(f"**{item['name']}**")
-                                    st.markdown(f"💰 {item['price']} Ks")
+                                    st.markdown(f'''
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                        <span style="font-weight:600; color:#333;">{html.escape(item['name'])}</span>
+                                        <span style="flex:1; border-bottom:2px dotted #ccc; margin:0 10px;"></span>
+                                        <span style="color:#1E90FF; font-weight:600; white-space:nowrap;">{item['price']} Ks</span>
+                                    </div>
+                                    ''', unsafe_allow_html=True)
                                     
                                     btn_col1, btn_col2 = st.columns(2)
                                     with btn_col1:
@@ -1156,11 +1173,11 @@ def main():
                                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                                         <span style="font-weight:600; color:#333;">{html.escape(item['name'])}</span>
                                         <span style="flex:1; border-bottom:2px dotted #ccc; margin:0 10px;"></span>
-                                        <span style="color:#FF5722; font-weight:600; white-space:nowrap;">💰 {item['price']} Ks</span>
+                                        <span style="color:#1E90FF; font-weight:600; white-space:nowrap;">{item['price']} Ks</span>
                                     </div>
                                     ''', unsafe_allow_html=True)
-                                    # ADD button below, left aligned
-                                    clicked = st.button("ADD", key=f"add_{item['item_id']}", type="primary")
+                                    # ADD button below, left aligned (red/orange)
+                                    clicked = st.button("ADD", key=f"add_{item['item_id']}", type="secondary")
                                 if clicked:
                                     # Check if item already in cart
                                     found = False
@@ -1214,39 +1231,128 @@ def main():
         st.divider()
         st.markdown("### 🛒 မှာထားသောပစ္စည်းများ")
         
+        
         total = 0
         for i, item in enumerate(st.session_state.cart):
             price = parse_price(item['price'])
             total += price * item['qty']
             
             with st.container(border=True):
-                # Item name and price
-                st.write(f"**{item['name']}**")
-                st.caption(f"{item['price']} Ks")
+                # Item name and price with dots
+                st.markdown(f'''
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-weight:600; color:#333;">{html.escape(item['name'])}</span>
+                    <span style="flex:1; border-bottom:2px dotted #ccc; margin:0 10px;"></span>
+                    <span style="color:#1E90FF; font-weight:600;">{item['price']} Ks</span>
+                </div>
+                ''', unsafe_allow_html=True)
                 
-                # Marker for horizontal layout on mobile
-                st.markdown('<div class="cart-item-marker"></div>', unsafe_allow_html=True)
+                # Quantity control: ➖ [qty] ➕ 🗑️ - aligned left, same size
+                b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1, 3])
+                with b1:
+                    minus_clicked = st.button("➖", key=f"minus_{i}", use_container_width=True)
+                with b2:
+                    # Display quantity - same size as buttons, no border
+                    st.markdown(f'''
+                    <div style="display:flex; align-items:center; justify-content:center; 
+                                background:transparent; border:none;
+                                height:48px; width:100%; box-sizing:border-box;
+                                font-size:20px; font-weight:bold; color:#333;">
+                        {item['qty']}
+                    </div>
+                    ''', unsafe_allow_html=True)
+                with b3:
+                    plus_clicked = st.button("➕", key=f"plus_{i}", use_container_width=True)
+                with b4:
+                    del_clicked = st.button("🗑️", key=f"remove_{i}", use_container_width=True)
+                with b5:
+                    st.empty()
                 
-                # Buttons row: ➖ qty ➕ cancel
-                col2, col3, col4, col5 = st.columns([1, 1, 1, 1.5])
-                with col2:
-                    if st.button("➖", key=f"minus_{i}", use_container_width=True):
-                        if st.session_state.cart[i]['qty'] > 1:
-                            st.session_state.cart[i]['qty'] -= 1
-                        else:
-                            st.session_state.cart.pop(i)
-                        st.rerun()
-                with col3:
-                    st.markdown(f"<div style='text-align:center; font-size:1.2em; padding-top:5px;'><b>{item['qty']}</b></div>", unsafe_allow_html=True)
-                with col4:
-                    if st.button("➕", key=f"plus_{i}", use_container_width=True):
-                        st.session_state.cart[i]['qty'] += 1
-                        st.rerun()
-                with col5:
-                    # Cancel button for this item
-                    if st.button("cancel", key=f"remove_{i}", use_container_width=True):
+                # Handle button clicks
+                if minus_clicked:
+                    if st.session_state.cart[i]['qty'] > 1:
+                        st.session_state.cart[i]['qty'] -= 1
+                    else:
                         st.session_state.cart.pop(i)
-                        st.rerun()
+                    st.rerun()
+                if plus_clicked:
+                    st.session_state.cart[i]['qty'] += 1
+                    st.rerun()
+                if del_clicked:
+                    st.session_state.cart.pop(i)
+                    st.rerun()
+        
+        # Inject JavaScript to style quantity buttons (using components.html to run JS)
+        # Layout: ➖ [qty] ➕ 🗑️ - aligned left, with small gaps
+        components.html("""
+        <script>
+            function styleQtyButtons() {
+                var doc = parent.document;
+                if (!doc) return;
+                
+                doc.querySelectorAll('button').forEach(function(btn) {
+                    var text = btn.textContent || btn.innerText || '';
+                    
+                    // Grey for minus - fully rounded
+                    if (text.indexOf('➖') !== -1) {
+                        btn.style.background = '#6c757d';
+                        btn.style.color = 'white';
+                        btn.style.border = 'none';
+                        btn.style.borderRadius = '12px';
+                        btn.style.minHeight = '48px';
+                        btn.style.minWidth = '50px';
+                        btn.style.fontSize = '18px';
+                    }
+                    // Grey for plus - fully rounded
+                    if (text.indexOf('➕') !== -1) {
+                        btn.style.background = '#6c757d';
+                        btn.style.color = 'white';
+                        btn.style.border = 'none';
+                        btn.style.borderRadius = '12px';
+                        btn.style.minHeight = '48px';
+                        btn.style.minWidth = '50px';
+                        btn.style.fontSize = '18px';
+                    }
+                    // Red for delete - fully rounded
+                    if (text.indexOf('🗑') !== -1) {
+                        btn.style.background = '#dc3545';
+                        btn.style.color = 'white';
+                        btn.style.border = 'none';
+                        btn.style.borderRadius = '12px';
+                        btn.style.minHeight = '48px';
+                        btn.style.minWidth = '50px';
+                        btn.style.fontSize = '16px';
+                    }
+                });
+                
+                // Fix column layout - aligned left with small gap
+                doc.querySelectorAll('[data-testid="stHorizontalBlock"]').forEach(function(block) {
+                    var html = block.innerHTML || '';
+                    if (html.indexOf('➖') !== -1 && html.indexOf('➕') !== -1) {
+                        block.style.display = 'flex';
+                        block.style.flexWrap = 'nowrap';
+                        block.style.gap = '8px';  // Small gap between buttons
+                        block.style.justifyContent = 'flex-start';  // Align left
+                        
+                        var children = block.children;
+                        for (var i = 0; i < children.length; i++) {
+                            children[i].style.flex = 'none';
+                            children[i].style.width = 'auto';
+                            children[i].style.padding = '0';
+                            children[i].style.minWidth = '0';
+                        }
+                    }
+                });
+            }
+            
+            // Run multiple times
+            styleQtyButtons();
+            setTimeout(styleQtyButtons, 100);
+            setTimeout(styleQtyButtons, 300);
+            setTimeout(styleQtyButtons, 500);
+            setInterval(styleQtyButtons, 800);
+        </script>
+        """, height=0)
         
         # Total and Order Section
         st.markdown(f"""
