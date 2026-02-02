@@ -470,15 +470,59 @@ def main():
     url_store_id = query_params.get("store", None)
     is_customer_mode = url_store_id is not None and not st.session_state.is_admin
     
-    # Hide sidebar for customers + Custom button styling
+    # Hide sidebar and all admin UI for customers - MINIMAL VIEW
     if is_customer_mode:
         st.markdown("""
         <style>
+        /* Hide sidebar completely */
         [data-testid="stSidebar"] {
-            display: none;
+            display: none !important;
         }
         [data-testid="stSidebarCollapsedControl"] {
-            display: none;
+            display: none !important;
+        }
+        
+        /* Hide header toolbar and menu */
+        [data-testid="stHeader"] {
+            display: none !important;
+        }
+        [data-testid="stToolbar"] {
+            display: none !important;
+        }
+        header {
+            display: none !important;
+        }
+        
+        /* Hide main menu (hamburger) */
+        #MainMenu {
+            display: none !important;
+        }
+        button[kind="header"] {
+            display: none !important;
+        }
+        
+        /* Hide footer */
+        footer {
+            display: none !important;
+        }
+        [data-testid="stFooter"] {
+            display: none !important;
+        }
+        
+        /* Hide deploy button */
+        .stDeployButton {
+            display: none !important;
+        }
+        
+        /* Hide "Made with Streamlit" */
+        .viewerBadge_container__r5tak {
+            display: none !important;
+        }
+        
+        /* Make page full width */
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 1rem !important;
         }
         </style>
         """, unsafe_allow_html=True)
@@ -1696,8 +1740,10 @@ def main():
                 st.balloons()
                 st.rerun()
     
-    st.divider()
-    st.caption("📱 QR Code Menu System | ⚡ Powered by Firebase")
+    # Footer - only show for admin
+    if st.session_state.is_admin:
+        st.divider()
+        st.caption("📱 QR Code Menu System | ⚡ Powered by Firebase")
 
 if __name__ == "__main__":
     main()
