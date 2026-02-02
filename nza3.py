@@ -268,6 +268,61 @@ def get_daily_sales(db, store_id):
     return 0, 0
 
 # ============================================
+# AUTO CLEANUP FUNCTIONS
+# ============================================
+def auto_cleanup_completed_orders(db, store_id):
+    """Auto delete completed orders from previous days (keep today's only)"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    orders_ref = db.collection('stores').document(store_id).collection('orders')
+    
+    # Get all completed orders
+    completed_orders = orders_ref.where('status', '==', 'completed').stream()
+    
+    deleted_count = 0
+    for order in completed_orders:
+        order_data = order.to_dict()
+        order_timestamp = order_data.get('timestamp', '')
+        
+        # Check if order is from previous day (not today)
+        if order_timestamp and not order_timestamp.startswith(today):
+            order.reference.delete()
+            deleted_count += 1
+    
+    if deleted_count > 0:
+        load_orders.clear()
+    
+    return deleted_count
+
+def auto_cleanup_old_daily_sales(db, store_id):
+    """Auto delete daily_sales older than 30 days"""
+    from datetime import timedelta
+    
+    # Calculate date 30 days ago
+    cutoff_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    
+    daily_sales_ref = db.collection('stores').document(store_id).collection('daily_sales')
+    
+    # Get all daily_sales documents
+    all_sales = daily_sales_ref.stream()
+    
+    deleted_count = 0
+    for sale in all_sales:
+        sale_date = sale.id  # Document ID is the date (e.g., "2026-01-01")
+        
+        # Delete if older than 30 days
+        if sale_date < cutoff_date:
+            sale.reference.delete()
+            deleted_count += 1
+    
+    return deleted_count
+
+def run_auto_cleanup(db, store_id):
+    """Run all auto cleanup tasks"""
+    orders_deleted = auto_cleanup_completed_orders(db, store_id)
+    sales_deleted = auto_cleanup_old_daily_sales(db, store_id)
+    return orders_deleted, sales_deleted
+
+# ============================================
 # HELPER FUNCTIONS
 # ============================================
 def parse_price(price_str):
@@ -899,6 +954,17 @@ def main():
     if st.session_state.is_admin and st.session_state.view_mode == 'counter':
         st.title("🖥️ Counter Dashboard")
         st.subheader(f"📍 {current_store['store_name']}")
+        
+        # Auto cleanup on dashboard load (runs once per session)
+        if 'cleanup_done_today' not in st.session_state:
+            st.session_state.cleanup_done_today = None
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        if st.session_state.cleanup_done_today != today:
+            orders_deleted, sales_deleted = run_auto_cleanup(db, store_id)
+            st.session_state.cleanup_done_today = today
+            if orders_deleted > 0 or sales_deleted > 0:
+                st.toast(f"🧹 Auto Cleanup: Orders {orders_deleted} ခု၊ Sales {sales_deleted} ခု ဖျက်ပြီး")
         
         orders = load_orders(db_id, store_id)
         
