@@ -783,6 +783,47 @@ def main():
                 with st.sidebar.expander("⚙️ ဆိုင်ပြင်ဆင်ရန်", expanded=False):
                     st.markdown("**Store ID:**")
                     st.code(current_store['store_id'], language=None)
+                    
+                    st.divider()
+                    st.markdown("**ဆိုင်အမည် ပြင်ရန်:**")
+                    with st.form("edit_store_form"):
+                        edit_store_name = st.text_input("ဆိုင်အမည်", value=current_store['store_name'])
+                        edit_admin_key = st.text_input("Admin Password", value=current_store.get('admin_key', ''))
+                        edit_logo = st.text_input("Logo", value=current_store.get('logo', '☕'))
+                        edit_subtitle = st.text_input("Subtitle", value=current_store.get('subtitle', 'Food & Drinks'))
+                        
+                        if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
+                            update_store(db, current_store['store_id'], {
+                                'store_name': edit_store_name.strip(),
+                                'admin_key': edit_admin_key.strip(),
+                                'logo': edit_logo.strip() or '☕',
+                                'subtitle': edit_subtitle.strip() or 'Food & Drinks'
+                            })
+                            st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
+                            st.rerun()
+                    
+                    st.divider()
+                    st.markdown("**⚠️ ဆိုင်ဖျက်ရန်:**")
+                    st.warning("ဤဆိုင်နှင့် data အားလုံး ပျက်သွားပါမည်!")
+                    
+                    if st.session_state.confirm_delete_store == current_store['store_id']:
+                        st.error(f"'{current_store['store_name']}' ကို ဖျက်မှာ သေချာပါသလား?")
+                        col_yes, col_no = st.columns(2)
+                        with col_yes:
+                            if st.button("✅ ဟုတ်ကဲ့ ဖျက်မည်", use_container_width=True, type="primary"):
+                                delete_store(db, current_store['store_id'])
+                                st.session_state.confirm_delete_store = None
+                                st.session_state.current_store = None
+                                st.success("✅ ဆိုင်ဖျက်ပြီးပါပြီ")
+                                st.rerun()
+                        with col_no:
+                            if st.button("❌ မဖျက်တော့ပါ", use_container_width=True):
+                                st.session_state.confirm_delete_store = None
+                                st.rerun()
+                    else:
+                        if st.button("🗑️ ဆိုင်ဖျက်မည်", use_container_width=True):
+                            st.session_state.confirm_delete_store = current_store['store_id']
+                            st.rerun()
         
         if current_store:
             store_id = current_store['store_id']
