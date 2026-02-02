@@ -134,6 +134,8 @@ def save_store(db, store_data):
         'admin_key': store_data['admin_key'],
         'logo': store_data.get('logo', '☕'),
         'subtitle': store_data.get('subtitle', 'Food & Drinks'),
+        'bg_color': store_data.get('bg_color', ''),
+        'bg_image': store_data.get('bg_image', ''),
         'created_at': firestore.SERVER_TIMESTAMP
     })
     clear_all_cache()
@@ -144,7 +146,9 @@ def update_store(db, store_id, new_data):
         'store_name': new_data['store_name'],
         'admin_key': new_data['admin_key'],
         'logo': new_data.get('logo', '☕'),
-        'subtitle': new_data.get('subtitle', 'Food & Drinks')
+        'subtitle': new_data.get('subtitle', 'Food & Drinks'),
+        'bg_color': new_data.get('bg_color', ''),
+        'bg_image': new_data.get('bg_image', '')
     })
     clear_all_cache()
 
@@ -771,6 +775,9 @@ def main():
                     new_admin_key = st.text_input("Admin Password *", placeholder="npt123")
                     new_logo = st.text_input("Logo", value="☕")
                     new_subtitle = st.text_input("Subtitle", value="Food & Drinks")
+                    st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
+                    new_bg_color = st.color_picker("Background Color", value="#ffffff")
+                    new_bg_image = st.text_input("Background Image URL", placeholder="https://example.com/bg.jpg")
                     
                     if st.form_submit_button("➕ ဆိုင်ထည့်မည်", use_container_width=True):
                         if new_store_id and new_store_name and new_admin_key:
@@ -779,7 +786,9 @@ def main():
                                 'store_name': new_store_name.strip(),
                                 'admin_key': new_admin_key.strip(),
                                 'logo': new_logo.strip() or '☕',
-                                'subtitle': new_subtitle.strip() or 'Food & Drinks'
+                                'subtitle': new_subtitle.strip() or 'Food & Drinks',
+                                'bg_color': new_bg_color if new_bg_color != "#ffffff" else '',
+                                'bg_image': new_bg_image.strip()
                             })
                             st.success(f"✅ '{new_store_name}' ထည့်ပြီးပါပြီ။")
                             st.rerun()
@@ -846,13 +855,19 @@ def main():
                         edit_admin_key = st.text_input("Admin Password", value=current_store.get('admin_key', ''))
                         edit_logo = st.text_input("Logo", value=current_store.get('logo', '☕'))
                         edit_subtitle = st.text_input("Subtitle", value=current_store.get('subtitle', 'Food & Drinks'))
+                        st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
+                        edit_bg_color = st.color_picker("Background Color", value=current_store.get('bg_color', '#ffffff') or '#ffffff')
+                        edit_bg_image = st.text_input("Background Image URL", value=current_store.get('bg_image', ''), placeholder="https://example.com/image.jpg")
+                        st.caption("💡 Image ထည့်ရင် Color ထက် Image ကို ဦးစားပေးမယ်")
                         
                         if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
                             update_store(db, current_store['store_id'], {
                                 'store_name': edit_store_name.strip(),
                                 'admin_key': edit_admin_key.strip(),
                                 'logo': edit_logo.strip() or '☕',
-                                'subtitle': edit_subtitle.strip() or 'Food & Drinks'
+                                'subtitle': edit_subtitle.strip() or 'Food & Drinks',
+                                'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
+                                'bg_image': edit_bg_image.strip()
                             })
                             st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
                             st.rerun()
@@ -1116,6 +1131,45 @@ def main():
         return  # Don't show menu in counter mode
     
     # Menu View
+    
+    # Apply background (Image takes priority over Color)
+    bg_image_url = current_store.get('bg_image', '')
+    bg_color = current_store.get('bg_color', '')
+    
+    if bg_image_url:
+        # Background Image with overlay
+        st.markdown(f"""
+        <style>
+        .stApp {{
+            background-image: url("{bg_image_url}");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }}
+        /* Add overlay for better readability */
+        .stApp::before {{
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.85);
+            z-index: -1;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+    elif bg_color:
+        # Background Color only
+        st.markdown(f"""
+        <style>
+        .stApp {{
+            background-color: {bg_color} !important;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+    
     logo_value = current_store.get('logo', '☕')
     is_image = isinstance(logo_value, str) and logo_value.startswith(('http://', 'https://'))
     
