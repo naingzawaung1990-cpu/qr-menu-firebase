@@ -421,8 +421,47 @@ def main():
         /* ============================================ */
         /* Hide marker divs */
         /* ============================================ */
-        .cart-order-marker, .cart-item-marker {
+        .cart-order-marker, .cart-item-marker, .menu-item-marker {
             display: none;
+        }
+        
+        /* ============================================ */
+        /* Menu Item - Force Horizontal ALWAYS (အသေ row) */
+        /* ============================================ */
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            gap: 0 !important;
+        }
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {
+            display: flex !important;
+            align-items: center !important;
+            width: auto !important;
+            flex: none !important;
+        }
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(1) {
+            flex: 2 1 0 !important;
+            min-width: 0 !important;
+        }
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
+            flex: 1 1 0 !important;
+            min-width: 0 !important;
+        }
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(3) {
+            flex: 0 0 auto !important;
+            justify-content: flex-end !important;
+        }
+        
+        /* Override Streamlit's responsive breakpoints */
+        @media (max-width: 768px) {
+            .menu-item-marker + div[data-testid="stHorizontalBlock"] {
+                flex-wrap: nowrap !important;
+                flex-direction: row !important;
+            }
+            .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {
+                width: auto !important;
+            }
         }
         
         /* ============================================ */
@@ -474,6 +513,16 @@ def main():
         }
         .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button:hover {
             background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
+        }
+        
+        /* ============================================ */
+        /* 3-Column Category Layout Styling */
+        /* ============================================ */
+        .category-column {
+            background: #fafafa;
+            border-radius: 15px;
+            padding: 10px;
+            margin: 5px 0;
         }
         </style>
         """, unsafe_allow_html=True)
@@ -1006,85 +1055,110 @@ def main():
             border-radius: 20px;
             font-size: 1.1em;
             font-weight: 600;
-            margin: 25px 0 15px 0;
+            margin: 10px 0 15px 0;
         }
         </style>
         """, unsafe_allow_html=True)
         
-        for cat in cat_names:
-            cat_items = category_items.get(cat, [])
-            if not cat_items:
-                continue
+        # ============================================
+        # 3-COLUMN CATEGORY LAYOUT
+        # Chinese Food (ဘယ်) | Rice (အလယ်) | Juice (ညာ)
+        # Category အသစ်တွေက အောက်မှာ row အသစ်နဲ့ ဆက်သွားမည်
+        # ============================================
+        
+        # Filter categories that have items
+        active_cats = [cat for cat in cat_names if category_items.get(cat)]
+        
+        # Display categories in 3-column rows
+        num_cols = 3
+        for row_start in range(0, len(active_cats), num_cols):
+            row_cats = active_cats[row_start:row_start + num_cols]
             
-            st.markdown(f'<div class="cat-header">{html.escape(cat)}</div>', unsafe_allow_html=True)
+            # Create 3 columns for this row
+            cols = st.columns(num_cols)
             
-            # Grid layout for items
-            cols = st.columns(2)
-            for idx, item in enumerate(cat_items):
-                with cols[idx % 2]:
-                    with st.container(border=True):
-                        if st.session_state.is_admin:
-                            # Admin view
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                st.markdown(f"**{item['name']}**")
-                                st.markdown(f"💰 {item['price']} Ks")
-                            with col2:
-                                if st.button("✏️", key=f"e_{item['item_id']}"):
-                                    st.session_state.editing_id = item['item_id']
-                                    st.rerun()
-                                if st.button("🗑️", key=f"d_{item['item_id']}"):
-                                    delete_menu_item(db, store_id, item['item_id'])
-                                    st.rerun()
-                        else:
-                            # Customer view - Order button on the side (compact)
-                            col1, col2 = st.columns([3, 2])
-                            with col1:
-                                st.markdown(f"**{item['name']}**")
-                                st.markdown(f"💰 {item['price']} Ks")
-                            with col2:
-                                # Green gradient Order button (type=primary)
-                                button_clicked = st.button("Order ➤", key=f"add_{item['item_id']}", type="primary")
-                                if button_clicked:
-                                    # Check if item already in cart
-                                    found = False
-                                    for cart_item in st.session_state.cart:
-                                        if cart_item['item_id'] == item['item_id']:
-                                            cart_item['qty'] += 1
-                                            found = True
-                                            break
-                                    
-                                    if not found:
-                                        st.session_state.cart.append({
-                                            'item_id': item['item_id'],
-                                            'name': item['name'],
-                                            'price': item['price'],
-                                            'qty': 1
-                                        })
-                                    st.rerun()
+            for col_idx, col in enumerate(cols):
+                if col_idx < len(row_cats):
+                    cat = row_cats[col_idx]
+                    cat_items = category_items.get(cat, [])
+                    
+                    with col:
+                        # Category header
+                        st.markdown(f'<div class="cat-header">{html.escape(cat)}</div>', unsafe_allow_html=True)
                         
-                        # Edit form for admin
-                        if st.session_state.is_admin and st.session_state.editing_id == item['item_id']:
-                            with st.form(f"edit_{item['item_id']}"):
-                                new_name = st.text_input("အမည်", value=item['name'])
-                                new_price = st.text_input("ဈေးနှုန်း", value=str(item['price']))
-                                cat_idx = cat_names.index(item.get('category', cat_names[0])) if item.get('category') in cat_names else 0
-                                new_cat = st.selectbox("အမျိုးအစား", cat_names, index=cat_idx)
+                        # Items in this category (vertical list)
+                        for item in cat_items:
+                            with st.container(border=True):
+                                if st.session_state.is_admin:
+                                    # Admin view
+                                    st.markdown(f"**{item['name']}**")
+                                    st.markdown(f"💰 {item['price']} Ks")
+                                    
+                                    btn_col1, btn_col2 = st.columns(2)
+                                    with btn_col1:
+                                        if st.button("✏️", key=f"e_{item['item_id']}"):
+                                            st.session_state.editing_id = item['item_id']
+                                            st.rerun()
+                                    with btn_col2:
+                                        if st.button("🗑️", key=f"d_{item['item_id']}"):
+                                            delete_menu_item(db, store_id, item['item_id'])
+                                            st.rerun()
+                                else:
+                                    # Customer view - Side by side layout (ဘေးတိုက်)
+                                    # Name | Price | Order button - aligned columns
+                                    st.markdown('<div class="menu-item-marker"></div>', unsafe_allow_html=True)
+                                    name_col, price_col, btn_col = st.columns([2, 1.5, 1])
+                                    with name_col:
+                                        st.markdown(f"**{item['name']}**")
+                                    with price_col:
+                                        st.markdown(f"💰 {item['price']} Ks")
+                                    with btn_col:
+                                        # Green gradient Order button
+                                        button_clicked = st.button("Order ➤", key=f"add_{item['item_id']}", type="primary")
+                                        if button_clicked:
+                                            # Check if item already in cart
+                                            found = False
+                                            for cart_item in st.session_state.cart:
+                                                if cart_item['item_id'] == item['item_id']:
+                                                    cart_item['qty'] += 1
+                                                    found = True
+                                                    break
+                                            
+                                            if not found:
+                                                st.session_state.cart.append({
+                                                    'item_id': item['item_id'],
+                                                    'name': item['name'],
+                                                    'price': item['price'],
+                                                    'qty': 1
+                                                })
+                                            st.rerun()
                                 
-                                c1, c2 = st.columns(2)
-                                with c1:
-                                    if st.form_submit_button("💾 သိမ်း", use_container_width=True):
-                                        update_menu_item(db, store_id, item['item_id'], {
-                                            'name': new_name.strip(),
-                                            'price': new_price.strip(),
-                                            'category': new_cat
-                                        })
-                                        st.session_state.editing_id = None
-                                        st.rerun()
-                                with c2:
-                                    if st.form_submit_button("❌ ပယ်", use_container_width=True):
-                                        st.session_state.editing_id = None
-                                        st.rerun()
+                                # Edit form for admin
+                                if st.session_state.is_admin and st.session_state.editing_id == item['item_id']:
+                                    with st.form(f"edit_{item['item_id']}"):
+                                        new_name = st.text_input("အမည်", value=item['name'])
+                                        new_price = st.text_input("ဈေးနှုန်း", value=str(item['price']))
+                                        cat_idx = cat_names.index(item.get('category', cat_names[0])) if item.get('category') in cat_names else 0
+                                        new_cat = st.selectbox("အမျိုးအစား", cat_names, index=cat_idx)
+                                        
+                                        c1, c2 = st.columns(2)
+                                        with c1:
+                                            if st.form_submit_button("💾 သိမ်း", use_container_width=True):
+                                                update_menu_item(db, store_id, item['item_id'], {
+                                                    'name': new_name.strip(),
+                                                    'price': new_price.strip(),
+                                                    'category': new_cat
+                                                })
+                                                st.session_state.editing_id = None
+                                                st.rerun()
+                                        with c2:
+                                            if st.form_submit_button("❌ ပယ်", use_container_width=True):
+                                                st.session_state.editing_id = None
+                                                st.rerun()
+                else:
+                    # Empty column - show nothing or placeholder
+                    with col:
+                        st.empty()
     
     # ============================================
     # CUSTOMER CART (Bottom of page for mobile)
