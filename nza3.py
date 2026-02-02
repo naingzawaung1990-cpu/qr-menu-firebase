@@ -322,6 +322,35 @@ if 'confirm_clear_history' not in st.session_state:
 
 SUPER_ADMIN_KEY = "superadmin123"
 
+# ============================================
+# COLOR CONFIGURATION - ဒီမှာ အရောင်တွေ ပြောင်းလို့ရပါတယ်
+# ============================================
+COLORS = {
+    # Quantity control buttons
+    "minus_btn": "#6c757d",      # ➖ button color (Grey)
+    "plus_btn": "#6c757d",       # ➕ button color (Grey)
+    "delete_btn": "#dc3545",     # 🗑️ button color (Red)
+    
+    # ADD button
+    "add_btn": "#FF5722",        # ADD button color (Orange)
+    
+    # Order button
+    "order_btn_start": "#2E8B57",  # Order button gradient start (Green)
+    "order_btn_end": "#9ACD32",    # Order button gradient end (Yellow-Green)
+    
+    # Header colors
+    "header_title": "#2E86AB",   # Store name color
+    "header_subtitle": "#8B4513", # Subtitle color
+    
+    # Category header
+    "category_bg_start": "#8B4513",  # Category header gradient start
+    "category_bg_end": "#A0522D",    # Category header gradient end
+    
+    # Total box
+    "total_bg_start": "#2E86AB",  # Total box gradient start
+    "total_bg_end": "#1a5276",    # Total box gradient end
+}
+
 def play_notification_sound():
     """Play notification sound for new orders"""
     # Using a simple beep sound via JavaScript
@@ -393,57 +422,48 @@ def main():
         </style>
         """, unsafe_allow_html=True)
     
-    # Custom styling for customers
+    # Custom styling for customers (using COLORS config)
     if not st.session_state.is_admin:
-        st.markdown("""
+        st.markdown(f"""
         <style>
         /* Make all buttons compact */
-        button {
+        button {{
             padding: 5px 12px !important;
             min-height: 0 !important;
             height: auto !important;
             border-radius: 8px !important;
-        }
-        button p {
+        }}
+        button p {{
             font-size: 14px !important;
             margin: 0 !important;
-        }
-        /* Green gradient for primary buttons (Order buttons) */
-        button[kind="primary"] {
-            background: linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%) !important;
-            border: none !important;
-            border-radius: 20px !important;
-        }
-        button[kind="primary"]:hover {
-            background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
-        }
+        }}
         
         /* ============================================ */
         /* Menu Item Row - Name left, Price right */
         /* ============================================ */
-        .menu-item-row {
+        .menu-item-row {{
             display: flex !important;
             justify-content: space-between !important;
             align-items: center !important;
             width: 100% !important;
             padding: 5px 0 !important;
-        }
-        .menu-item-row .item-name {
+        }}
+        .menu-item-row .item-name {{
             font-weight: 600 !important;
             font-size: 16px !important;
             color: #333 !important;
-        }
-        .menu-item-row .item-price {
+        }}
+        .menu-item-row .item-price {{
             font-size: 15px !important;
             color: #2E8B57 !important;
             font-weight: 500 !important;
-        }
+        }}
         
         /* ============================================ */
-        /* ADD buttons - Orange style */
+        /* ADD buttons - customizable color */
         /* ============================================ */
-        button[kind="secondary"] {
-            background: #FF5722 !important;
+        button[kind="secondary"] {{
+            background: {COLORS["add_btn"]} !important;
             border: none !important;
             border-radius: 8px !important;
             padding: 8px 20px !important;
@@ -451,137 +471,136 @@ def main():
             font-weight: 600 !important;
             font-size: 16px !important;
             min-width: auto !important;
-        }
-        button[kind="secondary"]:hover {
-            background: #E64A19 !important;
-        }
-        button[kind="secondary"] p {
+        }}
+        button[kind="secondary"]:hover {{
+            opacity: 0.85 !important;
+        }}
+        button[kind="secondary"] p {{
             color: #fff !important;
             font-weight: 600 !important;
             font-size: 16px !important;
-        }
-        /* Primary buttons - green */
-        button[kind="primary"] {
-            background: linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%) !important;
+        }}
+        /* Primary buttons - Order button */
+        button[kind="primary"] {{
+            background: linear-gradient(90deg, {COLORS["order_btn_start"]} 0%, {COLORS["order_btn_end"]} 100%) !important;
             border: none !important;
             border-radius: 20px !important;
-        }
-        button[kind="primary"]:hover {
-            background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
-        }
+        }}
+        button[kind="primary"]:hover {{
+            opacity: 0.9 !important;
+        }}
         /* Item container style */
-        div[data-testid="stVerticalBlock"] > div[data-testid="element-container"] > div[data-testid="stContainer"] {
+        div[data-testid="stVerticalBlock"] > div[data-testid="element-container"] > div[data-testid="stContainer"] {{
             border-radius: 12px !important;
             padding: 10px !important;
-        }
+        }}
         
         /* ============================================ */
         /* Hide marker divs */
         /* ============================================ */
-        .cart-order-marker, .cart-item-marker, .menu-item-marker, .qty-btn-marker {
+        .cart-order-marker, .cart-item-marker, .menu-item-marker, .qty-btn-marker {{
             display: none;
-        }
+        }}
         
         /* ============================================ */
-        /* Menu Item - Force Horizontal ALWAYS (အသေ row) */
+        /* Menu Item - Force Horizontal ALWAYS */
         /* ============================================ */
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] {
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] {{
             flex-wrap: nowrap !important;
             flex-direction: row !important;
             align-items: center !important;
             gap: 0 !important;
-        }
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {
+        }}
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {{
             display: flex !important;
             align-items: center !important;
             width: auto !important;
             flex: none !important;
-        }
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(1) {
+        }}
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(1) {{
             flex: 2 1 0 !important;
             min-width: 0 !important;
-        }
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
+        }}
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(2) {{
             flex: 1 1 0 !important;
             min-width: 0 !important;
-        }
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(3) {
+        }}
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(3) {{
             flex: 0 0 auto !important;
             justify-content: flex-end !important;
-        }
+        }}
         
         /* Override Streamlit's responsive breakpoints */
-        @media (max-width: 768px) {
-            .menu-item-marker + div[data-testid="stHorizontalBlock"] {
+        @media (max-width: 768px) {{
+            .menu-item-marker + div[data-testid="stHorizontalBlock"] {{
                 flex-wrap: nowrap !important;
                 flex-direction: row !important;
-            }
-            .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {
+            }}
+            .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {{
                 width: auto !important;
-            }
-        }
+            }}
+        }}
         
         /* ============================================ */
         /* Cart Item Buttons - Force Horizontal on Mobile */
         /* ============================================ */
-        .cart-item-marker + div[data-testid="stHorizontalBlock"] {
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] {{
             flex-wrap: nowrap !important;
             flex-direction: row !important;
             gap: 5px !important;
-        }
-        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div {
+        }}
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div {{
             flex: none !important;
             width: auto !important;
             min-width: 0 !important;
-        }
-        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div:first-child {
+        }}
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div:first-child {{
             flex: 2 !important;
-        }
+        }}
         
         /* ============================================ */
-        /* Adjacent Cart & Order buttons - ဘောင်ကပ်လျက် */
+        /* Adjacent Cart & Order buttons */
         /* ============================================ */
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] {
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] {{
             flex-wrap: nowrap !important;
             flex-direction: row !important;
             gap: 0 !important;
-        }
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div {
+        }}
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div {{
             padding-left: 0 !important;
             padding-right: 0 !important;
             flex: 1 !important;
-        }
+        }}
         /* Cart button - left rounded, white with border */
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button {
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button {{
             border-radius: 25px 0 0 25px !important;
             border: 1px solid #ccc !important;
             border-right: none !important;
             background: #fff !important;
             color: #333 !important;
-        }
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button:hover {
+        }}
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button:hover {{
             background: #f5f5f5 !important;
-        }
+        }}
         /* Order button - right rounded, green gradient */
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button {
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button {{
             border-radius: 0 25px 25px 0 !important;
-            background: linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%) !important;
+            background: linear-gradient(90deg, {COLORS["order_btn_start"]} 0%, {COLORS["order_btn_end"]} 100%) !important;
             border: none !important;
-        }
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button:hover {
-            background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
-        }
-        
+        }}
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button:hover {{
+            opacity: 0.9 !important;
+        }}
         
         /* ============================================ */
         /* 3-Column Category Layout Styling */
         /* ============================================ */
-        .category-column {
+        .category-column {{
             background: #fafafa;
             border-radius: 15px;
             padding: 10px;
             margin: 5px 0;
-        }
+        }}
         </style>
         """, unsafe_allow_html=True)
     
@@ -1012,13 +1031,13 @@ def main():
     .header-title {{
         font-size: 3em;
         font-weight: bold;
-        color: #2E86AB;
+        color: {COLORS["header_title"]};
         margin: 10px 0 5px 0;
     }}
     .header-subtitle {{
         font-size: 1.5em;
         font-weight: bold;
-        color: #8B4513;
+        color: {COLORS["header_subtitle"]};
         letter-spacing: 3px;
     }}
     </style>
@@ -1103,10 +1122,10 @@ def main():
     if not items and not categories:
         st.info("ℹ️ ပစ္စည်းမရှိသေးပါ။ Admin Login ဝင်ပြီး ထည့်ပါ။")
     else:
-        st.markdown("""
+        st.markdown(f"""
         <style>
-        .cat-header {
-            background: linear-gradient(135deg, #8B4513 0%, #A0522D 100%);
+        .cat-header {{
+            background: linear-gradient(135deg, {COLORS["category_bg_start"]} 0%, {COLORS["category_bg_end"]} 100%);
             color: #fff;
             text-align: center;
             padding: 10px 20px;
@@ -1114,7 +1133,7 @@ def main():
             font-size: 1.1em;
             font-weight: 600;
             margin: 10px 0 15px 0;
-        }
+        }}
         </style>
         """, unsafe_allow_html=True)
         
@@ -1285,67 +1304,62 @@ def main():
                     st.rerun()
         
         # Inject JavaScript to style quantity buttons (using components.html to run JS)
-        # Layout: ➖ [qty] ➕ 🗑️ - aligned left, with small gaps
-        components.html("""
+        # Colors from COLORS config
+        minus_color = COLORS["minus_btn"]
+        plus_color = COLORS["plus_btn"]
+        delete_color = COLORS["delete_btn"]
+        
+        components.html(f"""
         <script>
-            function styleQtyButtons() {
+            function styleQtyButtons() {{
                 var doc = parent.document;
                 if (!doc) return;
                 
-                doc.querySelectorAll('button').forEach(function(btn) {
+                doc.querySelectorAll('button').forEach(function(btn) {{
                     var text = btn.textContent || btn.innerText || '';
                     
-                    // Grey for minus - fully rounded
-                    if (text.indexOf('➖') !== -1) {
-                        btn.style.background = '#6c757d';
-                        btn.style.color = 'white';
-                        btn.style.border = 'none';
-                        btn.style.borderRadius = '12px';
-                        btn.style.minHeight = '48px';
-                        btn.style.minWidth = '50px';
-                        btn.style.fontSize = '18px';
-                    }
-                    // Grey for plus - fully rounded
-                    if (text.indexOf('➕') !== -1) {
-                        btn.style.background = '#6c757d';
-                        btn.style.color = 'white';
-                        btn.style.border = 'none';
-                        btn.style.borderRadius = '12px';
-                        btn.style.minHeight = '48px';
-                        btn.style.minWidth = '50px';
-                        btn.style.fontSize = '18px';
-                    }
-                    // Red for delete - fully rounded
-                    if (text.indexOf('🗑') !== -1) {
-                        btn.style.background = '#dc3545';
-                        btn.style.color = 'white';
-                        btn.style.border = 'none';
-                        btn.style.borderRadius = '12px';
-                        btn.style.minHeight = '48px';
-                        btn.style.minWidth = '50px';
-                        btn.style.fontSize = '16px';
-                    }
-                });
+                    // ➖ ➕ buttons - no color (default/transparent)
+                    if (text.indexOf('➖') !== -1 || text.indexOf('➕') !== -1) {{
+                        btn.style.setProperty('background', '#f0f2f6', 'important');
+                        btn.style.setProperty('color', '#333', 'important');
+                        btn.style.setProperty('border', '1px solid #ccc', 'important');
+                        btn.style.setProperty('border-radius', '12px', 'important');
+                        btn.style.setProperty('min-height', '48px', 'important');
+                        btn.style.setProperty('min-width', '50px', 'important');
+                        btn.style.setProperty('font-size', '18px', 'important');
+                    }}
+                    
+                    // 🗑️ Delete button - Red
+                    if (text.indexOf('🗑') !== -1) {{
+                        btn.style.setProperty('background', '{delete_color}', 'important');
+                        btn.style.setProperty('color', 'white', 'important');
+                        btn.style.setProperty('border', 'none', 'important');
+                        btn.style.setProperty('border-radius', '12px', 'important');
+                        btn.style.setProperty('min-height', '48px', 'important');
+                        btn.style.setProperty('min-width', '50px', 'important');
+                        btn.style.setProperty('font-size', '16px', 'important');
+                    }}
+                }});
                 
                 // Fix column layout - aligned left with small gap
-                doc.querySelectorAll('[data-testid="stHorizontalBlock"]').forEach(function(block) {
+                doc.querySelectorAll('[data-testid="stHorizontalBlock"]').forEach(function(block) {{
                     var html = block.innerHTML || '';
-                    if (html.indexOf('➖') !== -1 && html.indexOf('➕') !== -1) {
+                    if (html.indexOf('➖') !== -1 && html.indexOf('➕') !== -1) {{
                         block.style.display = 'flex';
                         block.style.flexWrap = 'nowrap';
-                        block.style.gap = '8px';  // Small gap between buttons
-                        block.style.justifyContent = 'flex-start';  // Align left
+                        block.style.gap = '8px';
+                        block.style.justifyContent = 'flex-start';
                         
                         var children = block.children;
-                        for (var i = 0; i < children.length; i++) {
+                        for (var i = 0; i < children.length; i++) {{
                             children[i].style.flex = 'none';
                             children[i].style.width = 'auto';
                             children[i].style.padding = '0';
                             children[i].style.minWidth = '0';
-                        }
-                    }
-                });
-            }
+                        }}
+                    }}
+                }});
+            }}
             
             // Run multiple times
             styleQtyButtons();
@@ -1358,7 +1372,7 @@ def main():
         
         # Total and Order Section
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #2E86AB 0%, #1a5276 100%); 
+        <div style="background: linear-gradient(135deg, {COLORS["total_bg_start"]} 0%, {COLORS["total_bg_end"]} 100%); 
                     padding: 15px; border-radius: 10px; text-align: center; margin: 15px 0;">
             <div style="color: #fff; font-size: 1.5em; font-weight: bold;">
                 💰 Total: {format_price(total)} Ks
