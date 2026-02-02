@@ -1150,13 +1150,15 @@ def main():
                                             delete_menu_item(db, store_id, item['item_id'])
                                             st.rerun()
                             else:
-                                # Customer view - Item(left) Price(right), ADD below left
+                                # Customer view - Item...dots...Price, ADD below left
                                 with st.container(border=True):
-                                    col_name, col_price = st.columns([2, 1])
-                                    with col_name:
-                                        st.markdown(f"**{item['name']}**")
-                                    with col_price:
-                                        st.markdown(f"<div style='text-align:right; color:#FF5722; font-weight:600;'>💰 {item['price']} Ks</div>", unsafe_allow_html=True)
+                                    st.markdown(f'''
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                        <span style="font-weight:600; color:#333;">{html.escape(item['name'])}</span>
+                                        <span style="flex:1; border-bottom:2px dotted #ccc; margin:0 10px;"></span>
+                                        <span style="color:#FF5722; font-weight:600; white-space:nowrap;">💰 {item['price']} Ks</span>
+                                    </div>
+                                    ''', unsafe_allow_html=True)
                                     # ADD button below, left aligned
                                     clicked = st.button("ADD", key=f"add_{item['item_id']}", type="primary")
                                 if clicked:
