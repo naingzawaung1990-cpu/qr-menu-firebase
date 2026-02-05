@@ -1558,7 +1558,14 @@ def main():
     if not st.session_state.is_admin and st.session_state.last_order_id and current_store:
         orders_for_status = load_orders(db_id, store_id)
         my_order = next((o for o in orders_for_status if o.get('order_id') == st.session_state.last_order_id), None)
-        if my_order and my_order.get('status') == 'preparing':
+        status = my_order.get('status') if my_order else None
+
+        if my_order is None:
+            st.session_state.last_order_id = None
+        elif status == 'completed':
+            st.session_state.last_order_id = None
+        elif status == 'preparing':
+            # Show banner
             st.markdown("""
             <div style="background: linear-gradient(135deg, #f0ad4e 0%, #ec971f 100%); 
                         padding: 18px 24px; border-radius: 15px; text-align: center; margin: 15px 0;
@@ -1572,15 +1579,12 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            # Auto-refresh every 8s so customer sees notification soon after admin clicks Preparing
+            load_orders.clear()
             st_autorefresh(interval=8000, limit=None, key="customer_preparing_refresh")
-            load_orders.clear()  # Allow fresh fetch on next run
-        elif my_order and my_order.get('status') == 'completed':
-            # Clear so we don't keep checking; next order will set new last_order_id
-            st.session_state.last_order_id = None
-        elif my_order is None:
-            # Order not found (e.g. deleted) - stop tracking
-            st.session_state.last_order_id = None
+        elif status == 'pending':
+            # Order still pending: poll so we see "preparing" when admin clicks
+            load_orders.clear()
+            st_autorefresh(interval=5000, limit=None, key="customer_preparing_refresh")
     
     categories = load_categories(db_id, store_id)
     items = load_menu_items(db_id, store_id)
