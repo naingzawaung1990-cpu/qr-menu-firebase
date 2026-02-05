@@ -25,6 +25,19 @@ st.set_page_config(
     initial_sidebar_state="collapsed" if is_customer_view else "expanded"
 )
 
+# Hide Streamlit branding (footer / "Created by Streamlit") - ဖုန်းနဲ့ scan ဖတ်တဲ့အခါ အောက်နားမှာ မပေါ်အောင်
+hide_st_style = """
+<style>
+footer, [data-testid="stFooter"] { visibility: hidden; display: none !important; }
+#MainMenu { visibility: hidden; }
+header { visibility: hidden; }
+.viewerBadge_container__r5tak { display: none !important; }
+a[href="https://streamlit.io"] { display: none !important; }
+.stDeployButton { display: none !important; }
+</style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
 # ============================================
 # FIREBASE CONNECTION
 # ============================================
