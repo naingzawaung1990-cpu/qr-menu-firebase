@@ -2,6 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import json
 import html
+import base64
 from datetime import datetime
 import uuid
 import qrcode
@@ -25,15 +26,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed" if is_customer_view else "expanded"
 )
 
-# Hide Streamlit branding (footer / "Created by Streamlit") - ဖုန်းနဲ့ scan ဖတ်တဲ့အခါ အောက်နားမှာ မပေါ်အောင်
+# Hide Streamlit branding - app ထဲက footer/menu ဖျောက် (Streamlit Cloud အောက်နား logo ဖျောက်ဖို့ URL မှာ &embed=true ထည့်ပါ)
 hide_st_style = """
 <style>
-footer, [data-testid="stFooter"] { visibility: hidden; display: none !important; }
-#MainMenu { visibility: hidden; }
-header { visibility: hidden; }
-.viewerBadge_container__r5tak { display: none !important; }
-a[href="https://streamlit.io"] { display: none !important; }
-.stDeployButton { display: none !important; }
+footer, [data-testid="stFooter"] { visibility: hidden !important; display: none !important; height: 0 !important; }
+#MainMenu, button[data-testid="baseButton-header"] { visibility: hidden !important; display: none !important; }
+header, [data-testid="stHeader"] { visibility: hidden !important; display: none !important; }
+.viewerBadge_container__r5tak, [data-testid="stAppViewContainer"] footer { display: none !important; }
+a[href="https://streamlit.io"], a[href*="streamlit.io"] { display: none !important; }
+.stDeployButton, [data-testid="stDeployButton"] { display: none !important; }
+/* Streamlit Cloud bottom bar - in iframe ထဲဆိုရင် ဒီကနေ မရနိုင်ဘူး, embed=true သုံးပါ */
 </style>
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
@@ -358,6 +360,53 @@ def parse_price(price_str):
     except:
         return 0
 
+
+def build_offline_menu_data_url(store, categories, items):
+    """
+    Build a data URL containing full menu HTML so customer can view menu offline when scanning QR.
+    Returns (data_url_string, byte_length) - if byte_length too large, QR may be dense.
+    """
+    store_name = html.escape(store.get('store_name', 'Menu'))
+    subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
+    logo = store.get('logo', '☕')
+    if isinstance(logo, str) and logo.startswith(('http://', 'https://')):
+        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;" alt="">'
+    else:
+        logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
+
+    cat_names = [c.get('category_name', '') for c in categories]
+    cat_items = {cat: [] for cat in cat_names}
+    for item in items:
+        cat = item.get('category', '')
+        if cat in cat_items:
+            cat_items[cat].append(item)
+
+    lines = []
+    for cat in cat_names:
+        if not cat_items.get(cat):
+            continue
+        lines.append(f'<div style="background:#8B4513;color:#fff;text-align:center;padding:8px;border-radius:10px;margin:12px 0 8px 0;font-weight:600;">{html.escape(cat)}</div>')
+        for it in cat_items[cat]:
+            name = html.escape(it.get('name', ''))
+            price = html.escape(str(it.get('price', '')))
+            lines.append(f'<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;"><span>{name}</span><span style="color:#1E90FF;font-weight:600;">{price} Ks</span></div>')
+
+    body_content = ''.join(lines)
+    html_doc = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<style>body{font-family:sans-serif;margin:12px;background:#fff;color:#222;font-size:16px}'
+        'h1{margin:0 0 4px 0;font-size:1.3em;color:#2E86AB}.sub{margin:0 0 12px 0;font-size:0.95em;color:#666}</style></head><body>'
+        f'<div style="text-align:center;margin-bottom:12px;">{logo_html}</div>'
+        f'<h1 style="text-align:center;">{store_name}</h1>'
+        f'<p class="sub" style="text-align:center;">{subtitle}</p>'
+        f'{body_content}'
+        '</body></html>'
+    )
+    b64 = base64.b64encode(html_doc.encode('utf-8')).decode('ascii')
+    data_url = 'data:text/html;base64,' + b64
+    return data_url, len(data_url)
+
 def format_price(price):
     """Format price for display"""
     return f"{price:,}"
@@ -483,8 +532,20 @@ def main():
     url_store_id = query_params.get("store", None)
     is_customer_mode = url_store_id is not None and not st.session_state.is_admin
     
-    # Hide sidebar and all admin UI for customers - MINIMAL VIEW
+    # Customer mode: embed=true မပါရင် redirect လုပ် - Streamlit Cloud အောက်နား အပြာ/အနီ logo မပေါ်အောင်
     if is_customer_mode:
+        embed_redirect_js = """
+        <script>
+        (function() {
+            var href = window.location.href;
+            if (href.indexOf('embed=true') === -1) {
+                var sep = href.indexOf('?') >= 0 ? '&' : '?';
+                window.location.replace(href + sep + 'embed=true');
+            }
+        })();
+        </script>
+        """
+        components.html(embed_redirect_js, height=0)
         st.markdown("""
         <style>
         /* Hide sidebar completely */
@@ -856,52 +917,77 @@ def main():
             
             if current_store:
                 with st.sidebar.expander("📱 QR Code ထုတ်ရန်", expanded=False):
-                    # Base URL - user can customize
-                    base_url = st.text_input(
-                        "App URL",
-                        value="https://your-app.streamlit.app",
-                        help="Streamlit Cloud URL ထည့်ပါ"
+                    qr_mode = st.radio(
+                        "QR အမျိုးအစား",
+                        ["📴 Offline Menu QR (လိုင်းမလိုပဲ menu ကြည့်ရန်)", "🌐 Online QR (မှာယူရန် - လိုင်းလိုသည်)"],
+                        index=0,
+                        help="Offline QR ဖတ်ရင် menu ချက်ချင်းပေါ်မယ်။ Online QR က app ဖွင့်ပြီး မှာယူလို့ရမယ်။"
                     )
-                    
-                    # Table number option
-                    qr_table = st.text_input("စားပွဲနံပါတ် (optional)", placeholder="5")
-                    
-                    # Generate QR URL
-                    if qr_table:
-                        qr_url = f"{base_url}/?store={current_store['store_id']}&table={qr_table}"
+                    use_offline_qr = "Offline" in qr_mode
+
+                    if use_offline_qr:
+                        # Offline: QR contains full menu HTML (data URL) - customer လိုင်းမဖွင့်ပဲ ဖတ်လို့ရမယ်
+                        categories_for_qr = load_categories(db_id, current_store['store_id'])
+                        items_for_qr = load_menu_items(db_id, current_store['store_id'])
+                        data_url, data_len = build_offline_menu_data_url(current_store, categories_for_qr, items_for_qr)
+                        if data_len > 2500:
+                            st.warning(f"⚠️ Menu ရှည်လွန်းနိုင်ပါတယ် ({data_len} လုံး)။ QR ကြီးမယ်။ မျိုးကွဲ လျှော့ပါ (သို့) ဆက်ထုတ်ပါ။")
+                        st.caption("ဒီ QR ကို Customer ဖတ်ရင် လိုင်းမဖွင့်ပဲ menu ကြည့်လို့ရပါတယ်။")
+                        if st.button("🔲 Offline QR ထုတ်မည်", use_container_width=True):
+                            qr = qrcode.QRCode(
+                                version=None,
+                                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                                box_size=8,
+                                border=2,
+                            )
+                            qr.add_data(data_url)
+                            qr.make(fit=True)
+                            qr_img = qr.make_image(fill_color="black", back_color="white")
+                            buf = BytesIO()
+                            qr_img.save(buf, format="PNG")
+                            buf.seek(0)
+                            st.image(buf, caption=f"Offline QR: {current_store['store_name']}")
+                            st.download_button(
+                                label="📥 Download Offline QR",
+                                data=buf.getvalue(),
+                                file_name=f"qr_offline_{current_store['store_id']}_menu.png",
+                                mime="image/png",
+                                use_container_width=True
+                            )
                     else:
-                        qr_url = f"{base_url}/?store={current_store['store_id']}"
-                    
-                    st.code(qr_url, language=None)
-                    
-                    # Generate QR Code
-                    if st.button("🔲 QR Code ထုတ်မည်", use_container_width=True):
-                        qr = qrcode.QRCode(
-                            version=1,
-                            error_correction=qrcode.constants.ERROR_CORRECT_L,
-                            box_size=10,
-                            border=4,
+                        # Online: QR = URL to Streamlit app (မှာယူရန်)
+                        base_url = st.text_input(
+                            "App URL",
+                            value="https://your-app.streamlit.app",
+                            help="Streamlit Cloud URL ထည့်ပါ"
                         )
-                        qr.add_data(qr_url)
-                        qr.make(fit=True)
-                        
-                        qr_img = qr.make_image(fill_color="black", back_color="white")
-                        
-                        # Save to bytes
-                        buf = BytesIO()
-                        qr_img.save(buf, format="PNG")
-                        buf.seek(0)
-                        
-                        st.image(buf, caption=f"QR: {current_store['store_name']}")
-                        
-                        # Download button
-                        st.download_button(
-                            label="📥 Download QR",
-                            data=buf.getvalue(),
-                            file_name=f"qr_{current_store['store_id']}_{qr_table or 'menu'}.png",
-                            mime="image/png",
-                            use_container_width=True
-                        )
+                        qr_table = st.text_input("စားပွဲနံပါတ် (optional)", placeholder="5")
+                        if qr_table:
+                            qr_url = f"{base_url}/?store={current_store['store_id']}&table={qr_table}&embed=true"
+                        else:
+                            qr_url = f"{base_url}/?store={current_store['store_id']}&embed=true"
+                        st.code(qr_url, language=None)
+                        if st.button("🔲 Online QR ထုတ်မည်", use_container_width=True):
+                            qr = qrcode.QRCode(
+                                version=1,
+                                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                                box_size=10,
+                                border=4,
+                            )
+                            qr.add_data(qr_url)
+                            qr.make(fit=True)
+                            qr_img = qr.make_image(fill_color="black", back_color="white")
+                            buf = BytesIO()
+                            qr_img.save(buf, format="PNG")
+                            buf.seek(0)
+                            st.image(buf, caption=f"Online QR: {current_store['store_name']}")
+                            st.download_button(
+                                label="📥 Download Online QR",
+                                data=buf.getvalue(),
+                                file_name=f"qr_online_{current_store['store_id']}_{qr_table or 'menu'}.png",
+                                mime="image/png",
+                                use_container_width=True
+                            )
                 
                 with st.sidebar.expander("⚙️ ဆိုင်ပြင်ဆင်ရန်", expanded=False):
                     st.markdown("**Store ID:**")
