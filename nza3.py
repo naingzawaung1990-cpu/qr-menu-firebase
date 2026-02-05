@@ -935,7 +935,7 @@ def main():
                         st.caption("ဒီ QR ကို Customer ဖတ်ရင် လိုင်းမဖွင့်ပဲ menu ကြည့်လို့ရပါတယ်။")
                         if st.button("🔲 Offline QR ထုတ်မည်", use_container_width=True):
                             qr = qrcode.QRCode(
-                                version=None,
+                                version=1,
                                 error_correction=qrcode.constants.ERROR_CORRECT_L,
                                 box_size=8,
                                 border=2,
