@@ -494,6 +494,8 @@ if 'auto_refresh' not in st.session_state:
     st.session_state.auto_refresh = True
 if 'order_success' not in st.session_state:
     st.session_state.order_success = None
+if 'last_order_id' not in st.session_state:
+    st.session_state.last_order_id = None  # For customer: show "preparing" noti when admin marks order
 if 'confirm_clear_history' not in st.session_state:
     st.session_state.confirm_clear_history = False
 
@@ -1552,6 +1554,34 @@ def main():
     if st.session_state.table_no and not st.session_state.is_admin and not st.session_state.order_success:
         st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
     
+    # Customer: show "preparing" notification when admin clicked Preparing for their order
+    if not st.session_state.is_admin and st.session_state.last_order_id and current_store:
+        orders_for_status = load_orders(db_id, store_id)
+        my_order = next((o for o in orders_for_status if o.get('order_id') == st.session_state.last_order_id), None)
+        if my_order and my_order.get('status') == 'preparing':
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #f0ad4e 0%, #ec971f 100%); 
+                        padding: 18px 24px; border-radius: 15px; text-align: center; margin: 15px 0;
+                        box-shadow: 0 4px 15px rgba(240, 173, 78, 0.4); border: 2px solid #eea236;">
+                <div style="font-size: 2em; margin-bottom: 8px;">👨‍🍳</div>
+                <div style="color: #fff; font-size: 1.4em; font-weight: bold;">
+                    ပြင်ဆင်နေပါပြီ ခဏစောင့်ပါ
+                </div>
+                <div style="color: rgba(255,255,255,0.95); font-size: 1em; margin-top: 6px;">
+                    Order ကို စားဖို့ ပြင်ဆင်နေပါပြီ။ မကြာမီ ရောက်ပါမည်။
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            # Auto-refresh every 8s so customer sees notification soon after admin clicks Preparing
+            st_autorefresh(interval=8000, limit=None, key="customer_preparing_refresh")
+            load_orders.clear()  # Allow fresh fetch on next run
+        elif my_order and my_order.get('status') == 'completed':
+            # Clear so we don't keep checking; next order will set new last_order_id
+            st.session_state.last_order_id = None
+        elif my_order is None:
+            # Order not found (e.g. deleted) - stop tracking
+            st.session_state.last_order_id = None
+    
     categories = load_categories(db_id, store_id)
     items = load_menu_items(db_id, store_id)
     
@@ -1933,6 +1963,7 @@ def main():
                     'total': total,
                     'items': items_str
                 }
+                st.session_state.last_order_id = order_id  # For "preparing" notification when admin updates
                 st.session_state.cart = []
                 st.balloons()
                 st.rerun()
