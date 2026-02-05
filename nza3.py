@@ -604,13 +604,7 @@ def main():
         components.html(embed_redirect_js, height=0)
         st.markdown("""
         <style>
-        /* Hide sidebar completely */
-        [data-testid="stSidebar"] {
-            display: none !important;
-        }
-        [data-testid="stSidebarCollapsedControl"] {
-            display: none !important;
-        }
+        /* Sidebar stays visible (collapsed) so Admin can expand and login */
         
         /* Hide header toolbar and menu */
         [data-testid="stHeader"] {
@@ -840,11 +834,10 @@ def main():
         """, unsafe_allow_html=True)
     
     # ============================================
-    # SIDEBAR (Admin only)
+    # SIDEBAR (always show so Admin can login even from store URL)
     # ============================================
-    if not is_customer_mode:
-        st.sidebar.title("📱 QR Code Menu System")
-        st.sidebar.caption("⚡ Powered by Firebase")
+    st.sidebar.title("📱 QR Code Menu System")
+    st.sidebar.caption("⚡ Powered by Firebase")
     
     url_table = query_params.get("table", None)
     
@@ -885,8 +878,8 @@ def main():
     if not is_customer_mode:
         st.sidebar.divider()
     
-    # Admin Login (sidebar only for non-customer mode)
-    if not st.session_state.is_admin and not is_customer_mode:
+    # Admin Login (sidebar - show even in customer view so admin can expand sidebar and login)
+    if not st.session_state.is_admin:
         if store_from_url:
             with st.sidebar.expander("🔐 Admin Login", expanded=False):
                 admin_key = st.text_input("Password", type="password", key="admin_pwd")
