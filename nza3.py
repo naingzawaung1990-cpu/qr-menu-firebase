@@ -407,6 +407,60 @@ def build_offline_menu_data_url(store, categories, items):
     data_url = 'data:text/html;base64,' + b64
     return data_url, len(data_url)
 
+
+# QR code version 40 supports max ~2953 bytes. Stay under 2900 to be safe.
+MAX_QR_DATA_LEN = 2900
+
+
+def _make_qr_image_bytes(data_url):
+    """Generate QR code image bytes from data URL. Raises if data too large for QR version 40."""
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=8,
+        border=2,
+    )
+    qr.add_data(data_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def build_offline_menu_data_url_per_category(store, category_name, items):
+    """Build one data URL for a single category (for splitting when full menu is too large)."""
+    store_name = html.escape(store.get('store_name', 'Menu'))
+    subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
+    logo = store.get('logo', '☕')
+    if isinstance(logo, str) and logo.startswith(('http://', 'https://')):
+        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;" alt="">'
+    else:
+        logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
+    lines = [
+        f'<div style="background:#8B4513;color:#fff;text-align:center;padding:8px;border-radius:10px;margin:12px 0 8px 0;font-weight:600;">{html.escape(category_name)}</div>'
+    ]
+    for it in items:
+        name = html.escape(it.get('name', ''))
+        price = html.escape(str(it.get('price', '')))
+        lines.append(f'<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;"><span>{name}</span><span style="color:#1E90FF;font-weight:600;">{price} Ks</span></div>')
+    body_content = ''.join(lines)
+    html_doc = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<style>body{font-family:sans-serif;margin:12px;background:#fff;color:#222;font-size:16px}'
+        'h1{margin:0 0 4px 0;font-size:1.3em;color:#2E86AB}.sub{margin:0 0 12px 0;font-size:0.95em;color:#666}</style></head><body>'
+        f'<div style="text-align:center;margin-bottom:12px;">{logo_html}</div>'
+        f'<h1 style="text-align:center;">{store_name}</h1>'
+        f'<p class="sub" style="text-align:center;">{subtitle} — {html.escape(category_name)}</p>'
+        f'{body_content}'
+        '</body></html>'
+    )
+    b64 = base64.b64encode(html_doc.encode('utf-8')).decode('ascii')
+    return 'data:text/html;base64,' + b64
+
+
 def format_price(price):
     """Format price for display"""
     return f"{price:,}"
@@ -930,30 +984,74 @@ def main():
                         categories_for_qr = load_categories(db_id, current_store['store_id'])
                         items_for_qr = load_menu_items(db_id, current_store['store_id'])
                         data_url, data_len = build_offline_menu_data_url(current_store, categories_for_qr, items_for_qr)
-                        if data_len > 2500:
-                            st.warning(f"⚠️ Menu ရှည်လွန်းနိုင်ပါတယ် ({data_len} လုံး)။ QR ကြီးမယ်။ မျိုးကွဲ လျှော့ပါ (သို့) ဆက်ထုတ်ပါ။")
+                        if data_len > MAX_QR_DATA_LEN:
+                            st.error(f"⚠️ Menu ရှည်လွန်းပါတယ် ({data_len} လုံး)။ QR တစ်ခုတည်းနဲ့ မထုတ်နိုင်ပါ။ အောက်က 'မျိုးကွဲအလိုက် QR ထုတ်မည်' သုံးပါ။")
+                        else:
+                            if data_len > 2500:
+                                st.warning(f"⚠️ Menu အနည်းငယ်ရှည်ပါတယ် ({data_len} လုံး)။")
                         st.caption("ဒီ QR ကို Customer ဖတ်ရင် လိုင်းမဖွင့်ပဲ menu ကြည့်လို့ရပါတယ်။")
-                        if st.button("🔲 Offline QR ထုတ်မည်", use_container_width=True):
-                            qr = qrcode.QRCode(
-                                version=1,
-                                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                                box_size=8,
-                                border=2,
-                            )
-                            qr.add_data(data_url)
-                            qr.make(fit=True)
-                            qr_img = qr.make_image(fill_color="black", back_color="white")
-                            buf = BytesIO()
-                            qr_img.save(buf, format="PNG")
-                            buf.seek(0)
-                            st.image(buf, caption=f"Offline QR: {current_store['store_name']}")
-                            st.download_button(
-                                label="📥 Download Offline QR",
-                                data=buf.getvalue(),
-                                file_name=f"qr_offline_{current_store['store_id']}_menu.png",
-                                mime="image/png",
-                                use_container_width=True
-                            )
+                        if st.button("🔲 Offline QR ထုတ်မည် (menu တစ်ခုလုံး)", use_container_width=True):
+                            if data_len > MAX_QR_DATA_LEN:
+                                st.error("Menu ရှည်လွန်းလို့ QR တစ်ခုတည်း မထုတ်နိုင်ပါ။ မျိုးကွဲအလိုက် ထုတ်မည် ကို သုံးပါ။")
+                            else:
+                                qr = qrcode.QRCode(
+                                    version=1,
+                                    error_correction=qrcode.constants.ERROR_CORRECT_L,
+                                    box_size=8,
+                                    border=2,
+                                )
+                                qr.add_data(data_url)
+                                qr.make(fit=True)
+                                qr_img = qr.make_image(fill_color="black", back_color="white")
+                                buf = BytesIO()
+                                qr_img.save(buf, format="PNG")
+                                buf.seek(0)
+                                st.image(buf, caption=f"Offline QR: {current_store['store_name']}")
+                                st.download_button(
+                                    label="📥 Download Offline QR",
+                                    data=buf.getvalue(),
+                                    file_name=f"qr_offline_{current_store['store_id']}_menu.png",
+                                    mime="image/png",
+                                    use_container_width=True
+                                )
+                        st.caption("မျိုးကွဲများလွန်းရင် အောက်က မျိုးကွဲအလိုက် QR ထုတ်ပါ။")
+                        if st.button("📑 မျိုးကွဲအလိုက် Offline QR များ ထုတ်မည်", use_container_width=True):
+                            cat_names = [c.get('category_name', '') for c in categories_for_qr]
+                            cat_items = {cat: [] for cat in cat_names}
+                            for it in items_for_qr:
+                                c = it.get('category', '')
+                                if c in cat_items:
+                                    cat_items[c].append(it)
+                            per_category = [(cat, cat_items[cat]) for cat in cat_names if cat_items.get(cat)]
+                            if not per_category:
+                                st.warning("ပစ္စည်းမရှိသေးပါ။")
+                            else:
+                                idx = 0
+                                for cat_name, cat_item_list in per_category:
+                                    data_url_cat = build_offline_menu_data_url_per_category(current_store, cat_name, cat_item_list)
+                                    if len(data_url_cat) > MAX_QR_DATA_LEN:
+                                        chunk_size = 10
+                                        for i in range(0, len(cat_item_list), chunk_size):
+                                            chunk = cat_item_list[i:i + chunk_size]
+                                            part_label = f"{cat_name} ({i//chunk_size + 1})" if len(cat_item_list) > chunk_size else cat_name
+                                            data_url_part = build_offline_menu_data_url_per_category(current_store, part_label, chunk)
+                                            try:
+                                                png_bytes = _make_qr_image_bytes(data_url_part)
+                                                st.image(png_bytes, caption=f"Offline QR: {part_label}")
+                                                safe_name = "".join(c if c.isalnum() or c in " ()" else "_" for c in part_label).strip()[:50]
+                                                st.download_button(f"📥 Download {part_label}", data=png_bytes, file_name=f"qr_offline_{current_store['store_id']}_{safe_name}.png", mime="image/png", use_container_width=True, key=f"offline_qr_dl_{current_store['store_id']}_{idx}")
+                                            except ValueError:
+                                                st.warning(f"'{part_label}' အတွက် data ရှည်လွန်းပါသေးတယ်။")
+                                            idx += 1
+                                    else:
+                                        try:
+                                            png_bytes = _make_qr_image_bytes(data_url_cat)
+                                            st.image(png_bytes, caption=f"Offline QR: {cat_name}")
+                                            safe_name = "".join(c if c.isalnum() or c in " ()" else "_" for c in cat_name).strip()[:50]
+                                            st.download_button(f"📥 Download {cat_name}", data=png_bytes, file_name=f"qr_offline_{current_store['store_id']}_{safe_name}.png", mime="image/png", use_container_width=True, key=f"offline_qr_dl_{current_store['store_id']}_{idx}")
+                                        except ValueError:
+                                            st.warning(f"'{cat_name}' အတွက် data ရှည်လွန်းပါသေးတယ်။")
+                                        idx += 1
                     else:
                         # Online: QR = URL to Streamlit app (မှာယူရန်)
                         base_url = st.text_input(
