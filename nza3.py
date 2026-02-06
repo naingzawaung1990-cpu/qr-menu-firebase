@@ -1337,9 +1337,9 @@ def main():
     
     # Menu View
     
-    # Apply background (Image takes priority over Color)
+    # Apply background (Image takes priority over Color) - စာမျက်နှာနဲ့ sidebar တစ်ရောင်တည်း
     bg_image_url = current_store.get('bg_image', '')
-    bg_color = current_store.get('bg_color', '')
+    bg_color = current_store.get('bg_color', '') or '#e8edd5'  # default: အောက်က အရောင် (light greenish-yellow)
     
     if bg_image_url:
         # Background Image with overlay
@@ -1352,7 +1352,6 @@ def main():
             background-repeat: no-repeat;
             background-attachment: fixed;
         }}
-        /* Add overlay for better readability */
         .stApp::before {{
             content: "";
             position: fixed;
@@ -1363,13 +1362,26 @@ def main():
             background: rgba(255, 255, 255, 0.85);
             z-index: -1;
         }}
+        [data-testid="stSidebar"] > div:first-child {{
+            background-color: {bg_color} !important;
+        }}
+        header[data-testid="stHeader"], [data-testid="stHeader"], header {{
+            background-color: {bg_color} !important;
+        }}
         </style>
         """, unsafe_allow_html=True)
-    elif bg_color:
-        # Background Color only
+    else:
+        # Background Color - စာမျက်နှာနဲ့ sidebar အောက်က အရောင်အတိုင်း
         st.markdown(f"""
         <style>
         .stApp {{
+            background-color: {bg_color} !important;
+        }}
+        [data-testid="stSidebar"] > div:first-child {{
+            background-color: {bg_color} !important;
+        }}
+        /* Deploy အတန်း (header) ကိုလည်း အောက်က အရောင်အတိုင်း */
+        header[data-testid="stHeader"], [data-testid="stHeader"], header {{
             background-color: {bg_color} !important;
         }}
         </style>
@@ -1413,14 +1425,6 @@ def main():
         <div class="header-subtitle">{html.escape(current_store.get('subtitle', 'Food & Drinks'))}</div>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Hint for staff - nza2.py လို ရိုးရှင်း
-    if not st.session_state.is_admin:
-        st.markdown("""
-        <p style="text-align:center; font-size:0.85rem; color:#666; margin:-8px 0 12px 0;">
-            🔐 Staff? ဘယ်ဘက် sidebar မှာ ဆိုင်ရွေးပါ၊ Password ထည့်ပြီး Login နှိပ်ပါ။
-        </p>
-        """, unsafe_allow_html=True)
     
     # Show order success alert
     if st.session_state.order_success and not st.session_state.is_admin:
