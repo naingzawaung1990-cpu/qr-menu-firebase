@@ -9,6 +9,8 @@ import qrcode
 from io import BytesIO
 
 # Firebase imports
+import warnings
+warnings.filterwarnings("ignore", message=".*Prefer using the 'filter' keyword argument instead.*", module="google.cloud.firestore")
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -23,19 +25,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Hide Streamlit branding - app ထဲက footer/menu ဖျောက် (Streamlit Cloud အောက်နား logo ဖျောက်ဖို့ URL မှာ &embed=true ထည့်ပါ)
-hide_st_style = """
-<style>
-footer, [data-testid="stFooter"] { visibility: hidden !important; display: none !important; height: 0 !important; }
-#MainMenu, button[data-testid="baseButton-header"] { visibility: hidden !important; display: none !important; }
-header, [data-testid="stHeader"] { visibility: hidden !important; display: none !important; }
-.viewerBadge_container__r5tak, [data-testid="stAppViewContainer"] footer { display: none !important; }
-a[href="https://streamlit.io"], a[href*="streamlit.io"] { display: none !important; }
-.stDeployButton, [data-testid="stDeployButton"] { display: none !important; }
-/* Streamlit Cloud bottom bar - in iframe ထဲဆိုရင် ဒီကနေ မရနိုင်ဘူး, embed=true သုံးပါ */
-</style>
-"""
-st.markdown(hide_st_style, unsafe_allow_html=True)
+# nza2.py လို - header/footer/sidebar မဖျောက်ပါ။ Sidebar အမြဲပေါ်အောင် CSS မထည့်ပါ။
 
 # ============================================
 # FIREBASE CONNECTION
@@ -775,10 +765,9 @@ def main():
         """, unsafe_allow_html=True)
     
     # ============================================
-    # SIDEBAR - nza2.py ပုံစံအတိုင်း
+    # SIDEBAR - nza2.py ပုံစံအတိုင်း (sidebar အမြဲပေါ်မယ်)
     # ============================================
     st.sidebar.title("📱 QR Code Menu System")
-    st.sidebar.caption("⚡ Powered by Firebase")
     
     url_table = query_params.get("table", None)
     
@@ -817,7 +806,7 @@ def main():
     
     st.sidebar.divider()
     
-    # Admin Login - nza2.py လို store_from_url ဆိုရင် expander
+    # Admin Login - nza2.py လို (store_from_url ဆိုရင် expander၊ မဟုတ်ရင် subheader + Password + Login)
     if not st.session_state.is_admin:
         if store_from_url:
             with st.sidebar.expander("🔐 Admin Login", expanded=False):
