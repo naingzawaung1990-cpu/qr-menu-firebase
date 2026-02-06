@@ -19,7 +19,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # Page config - app ဖွင့်တာနဲ့ sidebar collapsed၊ login ပြီးရင် auto collapse
 st.set_page_config(
-    page_title="QR Code Menu System",
+    page_title="QR Menu & Order",
     page_icon="📱",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -831,7 +831,7 @@ def main():
     # ============================================
     # SIDEBAR - nza2.py ပုံစံအတိုင်း (sidebar အမြဲပေါ်မယ်)
     # ============================================
-    st.sidebar.title("📱 QR Code Menu System")
+    st.sidebar.title("📱 QR Menu & Order")
     
     url_table = query_params.get("table", None)
     
@@ -1129,7 +1129,7 @@ def main():
                         # Online: QR = URL to Streamlit app (မှာယူရန်)
                         base_url = st.text_input(
                             "App URL",
-                            value="https://your-app.streamlit.app",
+                            value="https://qr-menu-firebase-cex4wc3ghyukqngnhhr7r2.streamlit.app",
                             help="Streamlit Cloud URL ထည့်ပါ"
                         )
                         qr_table = st.text_input("စားပွဲနံပါတ် (optional)", placeholder="5")
@@ -1374,7 +1374,7 @@ def main():
         return
     
     if not current_store:
-        st.title("📱 QR Code Menu System")
+        st.title("📱 QR Menu & Order")
         st.info("ဆိုင်မရှိသေးပါ။ Super Admin Login ဝင်ပြီး ဆိုင်အသစ်ထည့်ပါ။")
         return
     
@@ -2276,7 +2276,7 @@ def main():
     # Footer - only show for admin
     if st.session_state.is_admin:
         st.divider()
-        st.caption("📱 QR Code Menu System | ⚡ Powered by Firebase")
+        st.caption("📱 QR Menu & Order | ⚡ Powered by Firebase")
 
 if __name__ == "__main__":
     main()
