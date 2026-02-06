@@ -1426,32 +1426,32 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Show order success alert
+    # Show order success alert (ပြင်ဆင်နေပါပြီ noti ရောက်ရင် ဒီ box ပျောက်မယ်)
     if st.session_state.order_success and not st.session_state.is_admin:
         order_info = st.session_state.order_success
-        # Real-time order status for customer (admin က Preparing နှိပ်ရင် ပြမည်)
         order_status = get_order_status(db, current_store['store_id'], order_info['order_id']) if current_store else None
         
-        # Auto-refresh when customer is tracking order (pending/preparing) so status updates
         if order_status in ('pending', 'preparing'):
             st_autorefresh(interval=5000, limit=None, key="customer_order_track")
         
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); 
-                    padding: 25px; border-radius: 15px; text-align: center; margin: 20px 0;
-                    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);">
-            <div style="font-size: 3em; margin-bottom: 10px;">✅</div>
-            <div style="color: #fff; font-size: 1.5em; font-weight: bold; margin-bottom: 10px;">
-                Order ပို့ပြီးပါပြီ!
+        # စိမ်းရောင် "Order ပို့ပြီးပါပြီ!" box - pending ပဲ ပြ။ preparing/completed ရောက်ရင် မပြ
+        if order_status not in ('preparing', 'completed'):
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); 
+                        padding: 25px; border-radius: 15px; text-align: center; margin: 20px 0;
+                        box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);">
+                <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px;">
+                    <span style="font-size: 1.8em;">✅</span>
+                    <span style="color: #fff; font-size: 1.5em; font-weight: bold;">Order ပို့ပြီးပါပြီ!</span>
+                </div>
+                <div style="color: #fff; font-size: 1.2em; opacity: 0.95;">
+                    Order #{order_info['order_id']}
+                </div>
+                <div style="color: #fff; font-size: 1em; opacity: 0.9; margin-top: 10px;">
+                    🪑 စားပွဲ: {order_info['table_no']} | 💰 {format_price(order_info['total'])} Ks
+                </div>
             </div>
-            <div style="color: #fff; font-size: 1.2em; opacity: 0.95;">
-                Order #{order_info['order_id']}
-            </div>
-            <div style="color: #fff; font-size: 1em; opacity: 0.9; margin-top: 10px;">
-                🪑 စားပွဲ: {order_info['table_no']} | 💰 {format_price(order_info['total'])} Ks
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
         
         # Show status to customer when admin updates (Preparing / Completed)
         if order_status == 'preparing':
