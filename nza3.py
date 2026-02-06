@@ -2,6 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import json
 import html
+import base64
 from datetime import datetime
 import uuid
 import qrcode
@@ -14,16 +15,27 @@ from firebase_admin import credentials, firestore
 # Auto-refresh
 from streamlit_autorefresh import st_autorefresh
 
-# Page config - Check if customer (has store in URL)
-query_params_check = st.query_params
-is_customer_view = "store" in query_params_check
-
+# Page config - nza2.py လို sidebar အမြဲပွဲထား
 st.set_page_config(
     page_title="QR Code Menu System",
     page_icon="📱",
     layout="wide",
-    initial_sidebar_state="collapsed" if is_customer_view else "expanded"
+    initial_sidebar_state="expanded"
 )
+
+# Hide Streamlit branding - app ထဲက footer/menu ဖျောက် (Streamlit Cloud အောက်နား logo ဖျောက်ဖို့ URL မှာ &embed=true ထည့်ပါ)
+hide_st_style = """
+<style>
+footer, [data-testid="stFooter"] { visibility: hidden !important; display: none !important; height: 0 !important; }
+#MainMenu, button[data-testid="baseButton-header"] { visibility: hidden !important; display: none !important; }
+header, [data-testid="stHeader"] { visibility: hidden !important; display: none !important; }
+.viewerBadge_container__r5tak, [data-testid="stAppViewContainer"] footer { display: none !important; }
+a[href="https://streamlit.io"], a[href*="streamlit.io"] { display: none !important; }
+.stDeployButton, [data-testid="stDeployButton"] { display: none !important; }
+/* Streamlit Cloud bottom bar - in iframe ထဲဆိုရင် ဒီကနေ မရနိုင်ဘူး, embed=true သုံးပါ */
+</style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
 
 # ============================================
 # FIREBASE CONNECTION
@@ -134,6 +146,9 @@ def save_store(db, store_data):
         'admin_key': store_data['admin_key'],
         'logo': store_data.get('logo', '☕'),
         'subtitle': store_data.get('subtitle', 'Food & Drinks'),
+        'bg_color': store_data.get('bg_color', ''),
+        'bg_image': store_data.get('bg_image', ''),
+        'bg_counter': store_data.get('bg_counter', False),
         'created_at': firestore.SERVER_TIMESTAMP
     })
     clear_all_cache()
@@ -144,7 +159,10 @@ def update_store(db, store_id, new_data):
         'store_name': new_data['store_name'],
         'admin_key': new_data['admin_key'],
         'logo': new_data.get('logo', '☕'),
-        'subtitle': new_data.get('subtitle', 'Food & Drinks')
+        'subtitle': new_data.get('subtitle', 'Food & Drinks'),
+        'bg_color': new_data.get('bg_color', ''),
+        'bg_image': new_data.get('bg_image', ''),
+        'bg_counter': new_data.get('bg_counter', False)
     })
     clear_all_cache()
 
@@ -275,6 +293,61 @@ def get_daily_sales(db, store_id):
     return 0, 0
 
 # ============================================
+# AUTO CLEANUP FUNCTIONS
+# ============================================
+def auto_cleanup_completed_orders(db, store_id):
+    """Auto delete completed orders from previous days (keep today's only)"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    orders_ref = db.collection('stores').document(store_id).collection('orders')
+    
+    # Get all completed orders
+    completed_orders = orders_ref.where('status', '==', 'completed').stream()
+    
+    deleted_count = 0
+    for order in completed_orders:
+        order_data = order.to_dict()
+        order_timestamp = order_data.get('timestamp', '')
+        
+        # Check if order is from previous day (not today)
+        if order_timestamp and not order_timestamp.startswith(today):
+            order.reference.delete()
+            deleted_count += 1
+    
+    if deleted_count > 0:
+        load_orders.clear()
+    
+    return deleted_count
+
+def auto_cleanup_old_daily_sales(db, store_id):
+    """Auto delete daily_sales older than 30 days"""
+    from datetime import timedelta
+    
+    # Calculate date 30 days ago
+    cutoff_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    
+    daily_sales_ref = db.collection('stores').document(store_id).collection('daily_sales')
+    
+    # Get all daily_sales documents
+    all_sales = daily_sales_ref.stream()
+    
+    deleted_count = 0
+    for sale in all_sales:
+        sale_date = sale.id  # Document ID is the date (e.g., "2026-01-01")
+        
+        # Delete if older than 30 days
+        if sale_date < cutoff_date:
+            sale.reference.delete()
+            deleted_count += 1
+    
+    return deleted_count
+
+def run_auto_cleanup(db, store_id):
+    """Run all auto cleanup tasks"""
+    orders_deleted = auto_cleanup_completed_orders(db, store_id)
+    sales_deleted = auto_cleanup_old_daily_sales(db, store_id)
+    return orders_deleted, sales_deleted
+
+# ============================================
 # HELPER FUNCTIONS
 # ============================================
 def parse_price(price_str):
@@ -290,6 +363,107 @@ def parse_price(price_str):
         return int(''.join(filter(str.isdigit, result)))
     except:
         return 0
+
+
+def build_offline_menu_data_url(store, categories, items):
+    """
+    Build a data URL containing full menu HTML so customer can view menu offline when scanning QR.
+    Returns (data_url_string, byte_length) - if byte_length too large, QR may be dense.
+    """
+    store_name = html.escape(store.get('store_name', 'Menu'))
+    subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
+    logo = store.get('logo', '☕')
+    if isinstance(logo, str) and logo.startswith(('http://', 'https://')):
+        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;" alt="">'
+    else:
+        logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
+
+    cat_names = [c.get('category_name', '') for c in categories]
+    cat_items = {cat: [] for cat in cat_names}
+    for item in items:
+        cat = item.get('category', '')
+        if cat in cat_items:
+            cat_items[cat].append(item)
+
+    lines = []
+    for cat in cat_names:
+        if not cat_items.get(cat):
+            continue
+        lines.append(f'<div style="background:#8B4513;color:#fff;text-align:center;padding:8px;border-radius:10px;margin:12px 0 8px 0;font-weight:600;">{html.escape(cat)}</div>')
+        for it in cat_items[cat]:
+            name = html.escape(it.get('name', ''))
+            price = html.escape(str(it.get('price', '')))
+            lines.append(f'<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;"><span>{name}</span><span style="color:#1E90FF;font-weight:600;">{price} Ks</span></div>')
+
+    body_content = ''.join(lines)
+    html_doc = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<style>body{font-family:sans-serif;margin:12px;background:#fff;color:#222;font-size:16px}'
+        'h1{margin:0 0 4px 0;font-size:1.3em;color:#2E86AB}.sub{margin:0 0 12px 0;font-size:0.95em;color:#666}</style></head><body>'
+        f'<div style="text-align:center;margin-bottom:12px;">{logo_html}</div>'
+        f'<h1 style="text-align:center;">{store_name}</h1>'
+        f'<p class="sub" style="text-align:center;">{subtitle}</p>'
+        f'{body_content}'
+        '</body></html>'
+    )
+    b64 = base64.b64encode(html_doc.encode('utf-8')).decode('ascii')
+    data_url = 'data:text/html;base64,' + b64
+    return data_url, len(data_url)
+
+
+# QR code version 40 supports max ~2953 bytes. Stay under 2900 to be safe.
+MAX_QR_DATA_LEN = 2900
+
+
+def _make_qr_image_bytes(data_url):
+    """Generate QR code image bytes from data URL. Raises if data too large for QR version 40."""
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=8,
+        border=2,
+    )
+    qr.add_data(data_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def build_offline_menu_data_url_per_category(store, category_name, items):
+    """Build one data URL for a single category (for splitting when full menu is too large)."""
+    store_name = html.escape(store.get('store_name', 'Menu'))
+    subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
+    logo = store.get('logo', '☕')
+    if isinstance(logo, str) and logo.startswith(('http://', 'https://')):
+        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;" alt="">'
+    else:
+        logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
+    lines = [
+        f'<div style="background:#8B4513;color:#fff;text-align:center;padding:8px;border-radius:10px;margin:12px 0 8px 0;font-weight:600;">{html.escape(category_name)}</div>'
+    ]
+    for it in items:
+        name = html.escape(it.get('name', ''))
+        price = html.escape(str(it.get('price', '')))
+        lines.append(f'<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;"><span>{name}</span><span style="color:#1E90FF;font-weight:600;">{price} Ks</span></div>')
+    body_content = ''.join(lines)
+    html_doc = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<style>body{font-family:sans-serif;margin:12px;background:#fff;color:#222;font-size:16px}'
+        'h1{margin:0 0 4px 0;font-size:1.3em;color:#2E86AB}.sub{margin:0 0 12px 0;font-size:0.95em;color:#666}</style></head><body>'
+        f'<div style="text-align:center;margin-bottom:12px;">{logo_html}</div>'
+        f'<h1 style="text-align:center;">{store_name}</h1>'
+        f'<p class="sub" style="text-align:center;">{subtitle} — {html.escape(category_name)}</p>'
+        f'{body_content}'
+        '</body></html>'
+    )
+    b64 = base64.b64encode(html_doc.encode('utf-8')).decode('ascii')
+    return 'data:text/html;base64,' + b64
+
 
 def format_price(price):
     """Format price for display"""
@@ -324,10 +498,41 @@ if 'auto_refresh' not in st.session_state:
     st.session_state.auto_refresh = True
 if 'order_success' not in st.session_state:
     st.session_state.order_success = None
+if 'last_order_id' not in st.session_state:
+    st.session_state.last_order_id = None  # For customer: show "preparing" noti when admin marks order
 if 'confirm_clear_history' not in st.session_state:
     st.session_state.confirm_clear_history = False
 
 SUPER_ADMIN_KEY = "superadmin123"
+
+# ============================================
+# COLOR CONFIGURATION - ဒီမှာ အရောင်တွေ ပြောင်းလို့ရပါတယ်
+# ============================================
+COLORS = {
+    # Quantity control buttons
+    "minus_btn": "#6c757d",      # ➖ button color (Grey)
+    "plus_btn": "#6c757d",       # ➕ button color (Grey)
+    "delete_btn": "#dc3545",     # 🗑️ button color (Red)
+    
+    # ADD button
+    "add_btn": "#FF5722",        # ADD button color (Orange)
+    
+    # Order button
+    "order_btn_start": "#2E8B57",  # Order button gradient start (Green)
+    "order_btn_end": "#9ACD32",    # Order button gradient end (Yellow-Green)
+    
+    # Header colors
+    "header_title": "#2E86AB",   # Store name color
+    "header_subtitle": "#8B4513", # Subtitle color
+    
+    # Category header
+    "category_bg_start": "#8B4513",  # Category header gradient start
+    "category_bg_end": "#A0522D",    # Category header gradient end
+    
+    # Total box
+    "total_bg_start": "#2E86AB",  # Total box gradient start
+    "total_bg_end": "#1a5276",    # Total box gradient end
+}
 
 def play_notification_sound():
     """Play notification sound for new orders"""
@@ -382,75 +587,53 @@ def main():
     db_id = id(db)
     stores = load_stores(db_id)
     
-    # Check if customer view (QR scan)
+    # nza2.py လို - customer mode အတွက် CSS မထည့်ပါ (sidebar အမြဲပေါ်မယ်)
     query_params = st.query_params
     url_store_id = query_params.get("store", None)
     is_customer_mode = url_store_id is not None and not st.session_state.is_admin
     
-    # Hide sidebar for customers + Custom button styling
-    if is_customer_mode:
-        st.markdown("""
-        <style>
-        [data-testid="stSidebar"] {
-            display: none;
-        }
-        [data-testid="stSidebarCollapsedControl"] {
-            display: none;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-    
-    # Custom styling for customers
+    # Custom styling for customers (using COLORS config)
     if not st.session_state.is_admin:
-        st.markdown("""
+        st.markdown(f"""
         <style>
         /* Make all buttons compact */
-        button {
+        button {{
             padding: 5px 12px !important;
             min-height: 0 !important;
             height: auto !important;
             border-radius: 8px !important;
-        }
-        button p {
+        }}
+        button p {{
             font-size: 14px !important;
             margin: 0 !important;
-        }
-        /* Green gradient for primary buttons (Order buttons) */
-        button[kind="primary"] {
-            background: linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%) !important;
-            border: none !important;
-            border-radius: 20px !important;
-        }
-        button[kind="primary"]:hover {
-            background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
-        }
+        }}
         
         /* ============================================ */
         /* Menu Item Row - Name left, Price right */
         /* ============================================ */
-        .menu-item-row {
+        .menu-item-row {{
             display: flex !important;
             justify-content: space-between !important;
             align-items: center !important;
             width: 100% !important;
             padding: 5px 0 !important;
-        }
-        .menu-item-row .item-name {
+        }}
+        .menu-item-row .item-name {{
             font-weight: 600 !important;
             font-size: 16px !important;
             color: #333 !important;
-        }
-        .menu-item-row .item-price {
+        }}
+        .menu-item-row .item-price {{
             font-size: 15px !important;
             color: #2E8B57 !important;
             font-weight: 500 !important;
-        }
+        }}
         
         /* ============================================ */
-        /* All buttons - compact style */
+        /* ADD buttons - customizable color */
         /* ============================================ */
-        button[kind="primary"], button[kind="secondary"] {
-            background: #FF5722 !important;
+        button[kind="secondary"] {{
+            background: {COLORS["add_btn"]} !important;
             border: none !important;
             border-radius: 8px !important;
             padding: 8px 20px !important;
@@ -458,184 +641,144 @@ def main():
             font-weight: 600 !important;
             font-size: 16px !important;
             min-width: auto !important;
-        }
-        button[kind="primary"]:hover, button[kind="secondary"]:hover {
-            background: #E64A19 !important;
-        }
-        button[kind="primary"] p, button[kind="secondary"] p {
+        }}
+        button[kind="secondary"]:hover {{
+            opacity: 0.85 !important;
+        }}
+        button[kind="secondary"] p {{
             color: #fff !important;
             font-weight: 600 !important;
             font-size: 16px !important;
-        }
+        }}
+        /* Primary buttons - Order button */
+        button[kind="primary"] {{
+            background: linear-gradient(90deg, {COLORS["order_btn_start"]} 0%, {COLORS["order_btn_end"]} 100%) !important;
+            border: none !important;
+            border-radius: 20px !important;
+        }}
+        button[kind="primary"]:hover {{
+            opacity: 0.9 !important;
+        }}
         /* Item container style */
-        div[data-testid="stVerticalBlock"] > div[data-testid="element-container"] > div[data-testid="stContainer"] {
+        div[data-testid="stVerticalBlock"] > div[data-testid="element-container"] > div[data-testid="stContainer"] {{
             border-radius: 12px !important;
             padding: 10px !important;
-        }
+        }}
         
         /* ============================================ */
         /* Hide marker divs */
         /* ============================================ */
-        .cart-order-marker, .cart-item-marker, .menu-item-marker, .qty-btn-marker {
+        .cart-order-marker, .cart-item-marker, .menu-item-marker, .qty-btn-marker {{
             display: none;
-        }
+        }}
         
         /* ============================================ */
-        /* Menu Item - Force Horizontal ALWAYS (အသေ row) */
+        /* Menu Item - Force Horizontal ALWAYS */
         /* ============================================ */
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] {
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] {{
             flex-wrap: nowrap !important;
             flex-direction: row !important;
             align-items: center !important;
             gap: 0 !important;
-        }
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {
+        }}
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {{
             display: flex !important;
             align-items: center !important;
             width: auto !important;
             flex: none !important;
-        }
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(1) {
+        }}
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(1) {{
             flex: 2 1 0 !important;
             min-width: 0 !important;
-        }
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
+        }}
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(2) {{
             flex: 1 1 0 !important;
             min-width: 0 !important;
-        }
-        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(3) {
+        }}
+        .menu-item-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(3) {{
             flex: 0 0 auto !important;
             justify-content: flex-end !important;
-        }
+        }}
         
         /* Override Streamlit's responsive breakpoints */
-        @media (max-width: 768px) {
-            .menu-item-marker + div[data-testid="stHorizontalBlock"] {
+        @media (max-width: 768px) {{
+            .menu-item-marker + div[data-testid="stHorizontalBlock"] {{
                 flex-wrap: nowrap !important;
                 flex-direction: row !important;
-            }
-            .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {
+            }}
+            .menu-item-marker + div[data-testid="stHorizontalBlock"] > div {{
                 width: auto !important;
-            }
-        }
+            }}
+        }}
         
         /* ============================================ */
         /* Cart Item Buttons - Force Horizontal on Mobile */
         /* ============================================ */
-        .cart-item-marker + div[data-testid="stHorizontalBlock"] {
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] {{
             flex-wrap: nowrap !important;
             flex-direction: row !important;
             gap: 5px !important;
-        }
-        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div {
+        }}
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div {{
             flex: none !important;
             width: auto !important;
             min-width: 0 !important;
-        }
-        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div:first-child {
+        }}
+        .cart-item-marker + div[data-testid="stHorizontalBlock"] > div:first-child {{
             flex: 2 !important;
-        }
+        }}
         
         /* ============================================ */
-        /* Adjacent Cart & Order buttons - ဘောင်ကပ်လျက် */
+        /* Adjacent Cart & Order buttons */
         /* ============================================ */
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] {
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] {{
             flex-wrap: nowrap !important;
             flex-direction: row !important;
             gap: 0 !important;
-        }
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div {
+        }}
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div {{
             padding-left: 0 !important;
             padding-right: 0 !important;
             flex: 1 !important;
-        }
+        }}
         /* Cart button - left rounded, white with border */
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button {
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button {{
             border-radius: 25px 0 0 25px !important;
             border: 1px solid #ccc !important;
             border-right: none !important;
             background: #fff !important;
             color: #333 !important;
-        }
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button:hover {
+        }}
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:first-child button:hover {{
             background: #f5f5f5 !important;
-        }
+        }}
         /* Order button - right rounded, green gradient */
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button {
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button {{
             border-radius: 0 25px 25px 0 !important;
-            background: linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%) !important;
+            background: linear-gradient(90deg, {COLORS["order_btn_start"]} 0%, {COLORS["order_btn_end"]} 100%) !important;
             border: none !important;
-        }
-        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button:hover {
-            background: linear-gradient(90deg, #228B22 0%, #7CFC00 100%) !important;
-        }
-        
-        /* ============================================ */
-        /* Quantity Buttons (－ ＋) - Grey and Bigger */
-        /* ============================================ */
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] {
-            flex-wrap: nowrap !important;
-            flex-direction: row !important;
-            gap: 8px !important;
-            align-items: center !important;
-        }
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div {
-            flex: none !important;
-            width: auto !important;
-        }
-        /* Style for － and ＋ buttons (first two columns) */
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(1) button,
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(2) button {
-            background: #6c757d !important;
-            border: none !important;
-            border-radius: 10px !important;
-            padding: 12px 20px !important;
-            color: #fff !important;
-            font-weight: bold !important;
-            font-size: 20px !important;
-            min-width: 50px !important;
-            min-height: 45px !important;
-        }
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(1) button:hover,
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(2) button:hover {
-            background: #5a6268 !important;
-        }
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(1) button p,
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(2) button p {
-            font-size: 20px !important;
-            font-weight: bold !important;
-            color: #fff !important;
-        }
-        /* Delete button (🗑) style */
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(3) button {
-            background: #dc3545 !important;
-            border: none !important;
-            border-radius: 10px !important;
-            padding: 12px 16px !important;
-            min-height: 45px !important;
-        }
-        .qty-btn-marker + div[data-testid="stHorizontalBlock"] > div:nth-child(3) button:hover {
-            background: #c82333 !important;
-        }
+        }}
+        .cart-order-marker + div[data-testid="stHorizontalBlock"] > div:last-child button:hover {{
+            opacity: 0.9 !important;
+        }}
         
         /* ============================================ */
         /* 3-Column Category Layout Styling */
         /* ============================================ */
-        .category-column {
+        .category-column {{
             background: #fafafa;
             border-radius: 15px;
             padding: 10px;
             margin: 5px 0;
-        }
+        }}
         </style>
         """, unsafe_allow_html=True)
     
     # ============================================
-    # SIDEBAR (Admin only)
+    # SIDEBAR - nza2.py ပုံစံအတိုင်း
     # ============================================
-    if not is_customer_mode:
-        st.sidebar.title("📱 QR Code Menu System")
-        st.sidebar.caption("⚡ Powered by Firebase")
+    st.sidebar.title("📱 QR Code Menu System")
+    st.sidebar.caption("⚡ Powered by Firebase")
     
     url_table = query_params.get("table", None)
     
@@ -659,25 +802,23 @@ def main():
                     index=list(store_options.keys()).index(current_store['store_name'])
                 )
                 current_store = store_options[selected_store_name]
-            # Customer mode - no sidebar needed
+            else:
+                st.sidebar.markdown(f"### 🏪 {current_store['store_name']}")
         else:
-            if not is_customer_mode:
-                selected_store_name = st.sidebar.selectbox(
-                    "🏪 ဆိုင်ရွေးပါ",
-                    options=list(store_options.keys())
-                )
-                current_store = store_options[selected_store_name]
+            selected_store_name = st.sidebar.selectbox(
+                "🏪 ဆိုင်ရွေးပါ",
+                options=list(store_options.keys())
+            )
+            current_store = store_options[selected_store_name]
         
         st.session_state.current_store = current_store
     else:
-        if not is_customer_mode:
-            st.sidebar.info("ဆိုင်မရှိသေးပါ။")
+        st.sidebar.info("ဆိုင်မရှိသေးပါ။")
     
-    if not is_customer_mode:
-        st.sidebar.divider()
+    st.sidebar.divider()
     
-    # Admin Login (sidebar only for non-customer mode)
-    if not st.session_state.is_admin and not is_customer_mode:
+    # Admin Login - nza2.py လို store_from_url ဆိုရင် expander
+    if not st.session_state.is_admin:
         if store_from_url:
             with st.sidebar.expander("🔐 Admin Login", expanded=False):
                 admin_key = st.text_input("Password", type="password", key="admin_pwd")
@@ -694,8 +835,8 @@ def main():
                         st.error("❌ Password မှားနေပါတယ်။")
         else:
             st.sidebar.subheader("🔐 Admin Login")
-            admin_key = st.sidebar.text_input("Password", type="password")
-            if st.sidebar.button("Login", use_container_width=True):
+            admin_key = st.sidebar.text_input("Password", type="password", key="admin_pwd")
+            if st.sidebar.button("Login", use_container_width=True, key="admin_login"):
                 if admin_key == SUPER_ADMIN_KEY:
                     st.session_state.is_admin = True
                     st.session_state.is_super_admin = True
@@ -742,6 +883,9 @@ def main():
                     new_admin_key = st.text_input("Admin Password *", placeholder="npt123")
                     new_logo = st.text_input("Logo", value="☕")
                     new_subtitle = st.text_input("Subtitle", value="Food & Drinks")
+                    st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
+                    new_bg_color = st.color_picker("Background Color", value="#ffffff")
+                    new_bg_image = st.text_input("Background Image URL", placeholder="https://example.com/bg.jpg")
                     
                     if st.form_submit_button("➕ ဆိုင်ထည့်မည်", use_container_width=True):
                         if new_store_id and new_store_name and new_admin_key:
@@ -750,7 +894,9 @@ def main():
                                 'store_name': new_store_name.strip(),
                                 'admin_key': new_admin_key.strip(),
                                 'logo': new_logo.strip() or '☕',
-                                'subtitle': new_subtitle.strip() or 'Food & Drinks'
+                                'subtitle': new_subtitle.strip() or 'Food & Drinks',
+                                'bg_color': new_bg_color if new_bg_color != "#ffffff" else '',
+                                'bg_image': new_bg_image.strip()
                             })
                             st.success(f"✅ '{new_store_name}' ထည့်ပြီးပါပြီ။")
                             st.rerun()
@@ -759,56 +905,174 @@ def main():
             
             if current_store:
                 with st.sidebar.expander("📱 QR Code ထုတ်ရန်", expanded=False):
-                    # Base URL - user can customize
-                    base_url = st.text_input(
-                        "App URL",
-                        value="https://your-app.streamlit.app",
-                        help="Streamlit Cloud URL ထည့်ပါ"
+                    qr_mode = st.radio(
+                        "QR အမျိုးအစား",
+                        ["📴 Offline Menu QR (လိုင်းမလိုပဲ menu ကြည့်ရန်)", "🌐 Online QR (မှာယူရန် - လိုင်းလိုသည်)"],
+                        index=0,
+                        help="Offline QR ဖတ်ရင် menu ချက်ချင်းပေါ်မယ်။ Online QR က app ဖွင့်ပြီး မှာယူလို့ရမယ်။"
                     )
-                    
-                    # Table number option
-                    qr_table = st.text_input("စားပွဲနံပါတ် (optional)", placeholder="5")
-                    
-                    # Generate QR URL
-                    if qr_table:
-                        qr_url = f"{base_url}/?store={current_store['store_id']}&table={qr_table}"
+                    use_offline_qr = "Offline" in qr_mode
+
+                    if use_offline_qr:
+                        # Offline: QR contains full menu HTML (data URL) - customer လိုင်းမဖွင့်ပဲ ဖတ်လို့ရမယ်
+                        categories_for_qr = load_categories(db_id, current_store['store_id'])
+                        items_for_qr = load_menu_items(db_id, current_store['store_id'])
+                        data_url, data_len = build_offline_menu_data_url(current_store, categories_for_qr, items_for_qr)
+                        if data_len > MAX_QR_DATA_LEN:
+                            st.error(f"⚠️ Menu ရှည်လွန်းပါတယ် ({data_len} လုံး)။ QR တစ်ခုတည်းနဲ့ မထုတ်နိုင်ပါ။ အောက်က 'မျိုးကွဲအလိုက် QR ထုတ်မည်' သုံးပါ။")
+                        else:
+                            if data_len > 2500:
+                                st.warning(f"⚠️ Menu အနည်းငယ်ရှည်ပါတယ် ({data_len} လုံး)။")
+                        st.caption("ဒီ QR ကို Customer ဖတ်ရင် လိုင်းမဖွင့်ပဲ menu ကြည့်လို့ရပါတယ်။")
+                        if st.button("🔲 Offline QR ထုတ်မည် (menu တစ်ခုလုံး)", use_container_width=True):
+                            if data_len > MAX_QR_DATA_LEN:
+                                st.error("Menu ရှည်လွန်းလို့ QR တစ်ခုတည်း မထုတ်နိုင်ပါ။ မျိုးကွဲအလိုက် ထုတ်မည် ကို သုံးပါ။")
+                            else:
+                                qr = qrcode.QRCode(
+                                    version=1,
+                                    error_correction=qrcode.constants.ERROR_CORRECT_L,
+                                    box_size=8,
+                                    border=2,
+                                )
+                                qr.add_data(data_url)
+                                qr.make(fit=True)
+                                qr_img = qr.make_image(fill_color="black", back_color="white")
+                                buf = BytesIO()
+                                qr_img.save(buf, format="PNG")
+                                buf.seek(0)
+                                st.image(buf, caption=f"Offline QR: {current_store['store_name']}")
+                                st.download_button(
+                                    label="📥 Download Offline QR",
+                                    data=buf.getvalue(),
+                                    file_name=f"qr_offline_{current_store['store_id']}_menu.png",
+                                    mime="image/png",
+                                    use_container_width=True
+                                )
+                        st.caption("မျိုးကွဲများလွန်းရင် အောက်က မျိုးကွဲအလိုက် QR ထုတ်ပါ။")
+                        if st.button("📑 မျိုးကွဲအလိုက် Offline QR များ ထုတ်မည်", use_container_width=True):
+                            cat_names = [c.get('category_name', '') for c in categories_for_qr]
+                            cat_items = {cat: [] for cat in cat_names}
+                            for it in items_for_qr:
+                                c = it.get('category', '')
+                                if c in cat_items:
+                                    cat_items[c].append(it)
+                            per_category = [(cat, cat_items[cat]) for cat in cat_names if cat_items.get(cat)]
+                            if not per_category:
+                                st.warning("ပစ္စည်းမရှိသေးပါ။")
+                            else:
+                                idx = 0
+                                for cat_name, cat_item_list in per_category:
+                                    data_url_cat = build_offline_menu_data_url_per_category(current_store, cat_name, cat_item_list)
+                                    if len(data_url_cat) > MAX_QR_DATA_LEN:
+                                        chunk_size = 10
+                                        for i in range(0, len(cat_item_list), chunk_size):
+                                            chunk = cat_item_list[i:i + chunk_size]
+                                            part_label = f"{cat_name} ({i//chunk_size + 1})" if len(cat_item_list) > chunk_size else cat_name
+                                            data_url_part = build_offline_menu_data_url_per_category(current_store, part_label, chunk)
+                                            try:
+                                                png_bytes = _make_qr_image_bytes(data_url_part)
+                                                st.image(png_bytes, caption=f"Offline QR: {part_label}")
+                                                safe_name = "".join(c if c.isalnum() or c in " ()" else "_" for c in part_label).strip()[:50]
+                                                st.download_button(f"📥 Download {part_label}", data=png_bytes, file_name=f"qr_offline_{current_store['store_id']}_{safe_name}.png", mime="image/png", use_container_width=True, key=f"offline_qr_dl_{current_store['store_id']}_{idx}")
+                                            except ValueError:
+                                                st.warning(f"'{part_label}' အတွက် data ရှည်လွန်းပါသေးတယ်။")
+                                            idx += 1
+                                    else:
+                                        try:
+                                            png_bytes = _make_qr_image_bytes(data_url_cat)
+                                            st.image(png_bytes, caption=f"Offline QR: {cat_name}")
+                                            safe_name = "".join(c if c.isalnum() or c in " ()" else "_" for c in cat_name).strip()[:50]
+                                            st.download_button(f"📥 Download {cat_name}", data=png_bytes, file_name=f"qr_offline_{current_store['store_id']}_{safe_name}.png", mime="image/png", use_container_width=True, key=f"offline_qr_dl_{current_store['store_id']}_{idx}")
+                                        except ValueError:
+                                            st.warning(f"'{cat_name}' အတွက် data ရှည်လွန်းပါသေးတယ်။")
+                                        idx += 1
                     else:
-                        qr_url = f"{base_url}/?store={current_store['store_id']}"
-                    
-                    st.code(qr_url, language=None)
-                    
-                    # Generate QR Code
-                    if st.button("🔲 QR Code ထုတ်မည်", use_container_width=True):
-                        qr = qrcode.QRCode(
-                            version=1,
-                            error_correction=qrcode.constants.ERROR_CORRECT_L,
-                            box_size=10,
-                            border=4,
+                        # Online: QR = URL to Streamlit app (မှာယူရန်)
+                        base_url = st.text_input(
+                            "App URL",
+                            value="https://your-app.streamlit.app",
+                            help="Streamlit Cloud URL ထည့်ပါ"
                         )
-                        qr.add_data(qr_url)
-                        qr.make(fit=True)
-                        
-                        qr_img = qr.make_image(fill_color="black", back_color="white")
-                        
-                        # Save to bytes
-                        buf = BytesIO()
-                        qr_img.save(buf, format="PNG")
-                        buf.seek(0)
-                        
-                        st.image(buf, caption=f"QR: {current_store['store_name']}")
-                        
-                        # Download button
-                        st.download_button(
-                            label="📥 Download QR",
-                            data=buf.getvalue(),
-                            file_name=f"qr_{current_store['store_id']}_{qr_table or 'menu'}.png",
-                            mime="image/png",
-                            use_container_width=True
-                        )
+                        qr_table = st.text_input("စားပွဲနံပါတ် (optional)", placeholder="5")
+                        if qr_table:
+                            qr_url = f"{base_url}/?store={current_store['store_id']}&table={qr_table}&embed=true"
+                        else:
+                            qr_url = f"{base_url}/?store={current_store['store_id']}&embed=true"
+                        st.code(qr_url, language=None)
+                        if st.button("🔲 Online QR ထုတ်မည်", use_container_width=True):
+                            qr = qrcode.QRCode(
+                                version=1,
+                                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                                box_size=10,
+                                border=4,
+                            )
+                            qr.add_data(qr_url)
+                            qr.make(fit=True)
+                            qr_img = qr.make_image(fill_color="black", back_color="white")
+                            buf = BytesIO()
+                            qr_img.save(buf, format="PNG")
+                            buf.seek(0)
+                            st.image(buf, caption=f"Online QR: {current_store['store_name']}")
+                            st.download_button(
+                                label="📥 Download Online QR",
+                                data=buf.getvalue(),
+                                file_name=f"qr_online_{current_store['store_id']}_{qr_table or 'menu'}.png",
+                                mime="image/png",
+                                use_container_width=True
+                            )
                 
                 with st.sidebar.expander("⚙️ ဆိုင်ပြင်ဆင်ရန်", expanded=False):
                     st.markdown("**Store ID:**")
                     st.code(current_store['store_id'], language=None)
+                    
+                    st.divider()
+                    st.markdown("**ဆိုင်အမည် ပြင်ရန်:**")
+                    with st.form("edit_store_form"):
+                        edit_store_name = st.text_input("ဆိုင်အမည်", value=current_store['store_name'])
+                        edit_admin_key = st.text_input("Admin Password", value=current_store.get('admin_key', ''))
+                        edit_logo = st.text_input("Logo", value=current_store.get('logo', '☕'))
+                        edit_subtitle = st.text_input("Subtitle", value=current_store.get('subtitle', 'Food & Drinks'))
+                        st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
+                        edit_bg_color = st.color_picker("Background Color", value=current_store.get('bg_color', '#ffffff') or '#ffffff')
+                        edit_bg_image = st.text_input("Background Image URL", value=current_store.get('bg_image', ''), placeholder="https://example.com/image.jpg")
+                        edit_bg_counter = st.checkbox("Counter Dashboard မှာလည်း Background ပြောင်းမယ်", value=current_store.get('bg_counter', False))
+                        st.caption("💡 Image ထည့်ရင် Color ထက် Image ကို ဦးစားပေးမယ်")
+                        
+                        if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
+                            update_store(db, current_store['store_id'], {
+                                'store_name': edit_store_name.strip(),
+                                'admin_key': edit_admin_key.strip(),
+                                'logo': edit_logo.strip() or '☕',
+                                'subtitle': edit_subtitle.strip() or 'Food & Drinks',
+                                'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
+                                'bg_image': edit_bg_image.strip(),
+                                'bg_counter': edit_bg_counter
+                            })
+                            st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
+                            st.rerun()
+                    
+                    st.divider()
+                    st.markdown("**⚠️ ဆိုင်ဖျက်ရန်:**")
+                    st.warning("ဤဆိုင်နှင့် data အားလုံး ပျက်သွားပါမည်!")
+                    
+                    if st.session_state.confirm_delete_store == current_store['store_id']:
+                        st.error(f"'{current_store['store_name']}' ကို ဖျက်မှာ သေချာပါသလား?")
+                        col_yes, col_no = st.columns(2)
+                        with col_yes:
+                            if st.button("✅ ဟုတ်ကဲ့ ဖျက်မည်", use_container_width=True, type="primary"):
+                                delete_store(db, current_store['store_id'])
+                                st.session_state.confirm_delete_store = None
+                                st.session_state.current_store = None
+                                st.success("✅ ဆိုင်ဖျက်ပြီးပါပြီ")
+                                st.rerun()
+                        with col_no:
+                            if st.button("❌ မဖျက်တော့ပါ", use_container_width=True):
+                                st.session_state.confirm_delete_store = None
+                                st.rerun()
+                    else:
+                        if st.button("🗑️ ဆိုင်ဖျက်မည်", use_container_width=True):
+                            st.session_state.confirm_delete_store = current_store['store_id']
+                            st.rerun()
         
         if current_store:
             store_id = current_store['store_id']
@@ -882,8 +1146,56 @@ def main():
     
     # Counter Dashboard View
     if st.session_state.is_admin and st.session_state.view_mode == 'counter':
+        
+        # Apply background if enabled for Counter Dashboard
+        if current_store.get('bg_counter', False):
+            bg_image_url = current_store.get('bg_image', '')
+            bg_color = current_store.get('bg_color', '')
+            
+            if bg_image_url:
+                st.markdown(f"""
+                <style>
+                .stApp {{
+                    background-image: url("{bg_image_url}");
+                    background-size: cover;
+                    background-position: center;
+                    background-repeat: no-repeat;
+                    background-attachment: fixed;
+                }}
+                .stApp::before {{
+                    content: "";
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(255, 255, 255, 0.85);
+                    z-index: -1;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+            elif bg_color:
+                st.markdown(f"""
+                <style>
+                .stApp {{
+                    background-color: {bg_color} !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+        
         st.title("🖥️ Counter Dashboard")
         st.subheader(f"📍 {current_store['store_name']}")
+        
+        # Auto cleanup on dashboard load (runs once per session)
+        if 'cleanup_done_today' not in st.session_state:
+            st.session_state.cleanup_done_today = None
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        if st.session_state.cleanup_done_today != today:
+            orders_deleted, sales_deleted = run_auto_cleanup(db, store_id)
+            st.session_state.cleanup_done_today = today
+            if orders_deleted > 0 or sales_deleted > 0:
+                st.toast(f"🧹 Auto Cleanup: Orders {orders_deleted} ခု၊ Sales {sales_deleted} ခု ဖျက်ပြီး")
         
         orders = load_orders(db_id, store_id)
         
@@ -1035,6 +1347,45 @@ def main():
         return  # Don't show menu in counter mode
     
     # Menu View
+    
+    # Apply background (Image takes priority over Color)
+    bg_image_url = current_store.get('bg_image', '')
+    bg_color = current_store.get('bg_color', '')
+    
+    if bg_image_url:
+        # Background Image with overlay
+        st.markdown(f"""
+        <style>
+        .stApp {{
+            background-image: url("{bg_image_url}");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }}
+        /* Add overlay for better readability */
+        .stApp::before {{
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.85);
+            z-index: -1;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+    elif bg_color:
+        # Background Color only
+        st.markdown(f"""
+        <style>
+        .stApp {{
+            background-color: {bg_color} !important;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+    
     logo_value = current_store.get('logo', '☕')
     is_image = isinstance(logo_value, str) and logo_value.startswith(('http://', 'https://'))
     
@@ -1057,13 +1408,13 @@ def main():
     .header-title {{
         font-size: 3em;
         font-weight: bold;
-        color: #2E86AB;
+        color: {COLORS["header_title"]};
         margin: 10px 0 5px 0;
     }}
     .header-subtitle {{
         font-size: 1.5em;
         font-weight: bold;
-        color: #8B4513;
+        color: {COLORS["header_subtitle"]};
         letter-spacing: 3px;
     }}
     </style>
@@ -1073,6 +1424,14 @@ def main():
         <div class="header-subtitle">{html.escape(current_store.get('subtitle', 'Food & Drinks'))}</div>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Hint for staff - nza2.py လို ရိုးရှင်း
+    if not st.session_state.is_admin:
+        st.markdown("""
+        <p style="text-align:center; font-size:0.85rem; color:#666; margin:-8px 0 12px 0;">
+            🔐 Staff? ဘယ်ဘက် sidebar မှာ ဆိုင်ရွေးပါ၊ Password ထည့်ပြီး Login နှိပ်ပါ။
+        </p>
+        """, unsafe_allow_html=True)
     
     # Show order success alert
     if st.session_state.order_success and not st.session_state.is_admin:
@@ -1164,6 +1523,38 @@ def main():
     if st.session_state.table_no and not st.session_state.is_admin and not st.session_state.order_success:
         st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
     
+    # Customer: show "preparing" notification when admin clicked Preparing for their order
+    if not st.session_state.is_admin and st.session_state.last_order_id and current_store:
+        orders_for_status = load_orders(db_id, store_id)
+        my_order = next((o for o in orders_for_status if o.get('order_id') == st.session_state.last_order_id), None)
+        status = my_order.get('status') if my_order else None
+
+        if my_order is None:
+            st.session_state.last_order_id = None
+        elif status == 'completed':
+            st.session_state.last_order_id = None
+        elif status == 'preparing':
+            # Show banner
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #f0ad4e 0%, #ec971f 100%); 
+                        padding: 18px 24px; border-radius: 15px; text-align: center; margin: 15px 0;
+                        box-shadow: 0 4px 15px rgba(240, 173, 78, 0.4); border: 2px solid #eea236;">
+                <div style="font-size: 2em; margin-bottom: 8px;">👨‍🍳</div>
+                <div style="color: #fff; font-size: 1.4em; font-weight: bold;">
+                    ပြင်ဆင်နေပါပြီ ခဏစောင့်ပါ
+                </div>
+                <div style="color: rgba(255,255,255,0.95); font-size: 1em; margin-top: 6px;">
+                    Order ကို စားဖို့ ပြင်ဆင်နေပါပြီ။ မကြာမီ ရောက်ပါမည်။
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            load_orders.clear()
+            st_autorefresh(interval=8000, limit=None, key="customer_preparing_refresh")
+        elif status == 'pending':
+            # Order still pending: poll so we see "preparing" when admin clicks
+            load_orders.clear()
+            st_autorefresh(interval=5000, limit=None, key="customer_preparing_refresh")
+    
     categories = load_categories(db_id, store_id)
     items = load_menu_items(db_id, store_id)
     
@@ -1177,10 +1568,10 @@ def main():
     if not items and not categories:
         st.info("ℹ️ ပစ္စည်းမရှိသေးပါ။ Admin Login ဝင်ပြီး ထည့်ပါ။")
     else:
-        st.markdown("""
+        st.markdown(f"""
         <style>
-        .cat-header {
-            background: linear-gradient(135deg, #8B4513 0%, #A0522D 100%);
+        .cat-header {{
+            background: linear-gradient(135deg, {COLORS["category_bg_start"]} 0%, {COLORS["category_bg_end"]} 100%);
             color: #fff;
             text-align: center;
             padding: 10px 20px;
@@ -1188,7 +1579,7 @@ def main():
             font-size: 1.1em;
             font-weight: 600;
             margin: 10px 0 15px 0;
-        }
+        }}
         </style>
         """, unsafe_allow_html=True)
         
@@ -1305,6 +1696,7 @@ def main():
         st.divider()
         st.markdown("### 🛒 မှာထားသောပစ္စည်းများ")
         
+        
         total = 0
         for i, item in enumerate(st.session_state.cart):
             price = parse_price(item['price'])
@@ -1320,39 +1712,175 @@ def main():
                 </div>
                 ''', unsafe_allow_html=True)
                 
-                # Quantity display
-                st.markdown(f'''
-                <div style="display:flex; align-items:center; gap:8px; margin-top:5px; margin-bottom:8px;">
-                    <span style="font-size:1.2em; font-weight:bold; margin:0 10px;">အရေအတွက်: {item['qty']}</span>
-                </div>
-                ''', unsafe_allow_html=True)
-                
-                # Marker div for quantity buttons styling
-                st.markdown('<div class="qty-btn-marker"></div>', unsafe_allow_html=True)
-                
-                # Buttons row: ➖ ➕ 🗑️ - grey and bigger buttons
-                btn1, btn2, btn3, btn4 = st.columns([1, 1, 1, 4])
-                with btn1:
-                    if st.button("－", key=f"minus_{i}"):
-                        if st.session_state.cart[i]['qty'] > 1:
-                            st.session_state.cart[i]['qty'] -= 1
-                        else:
-                            st.session_state.cart.pop(i)
-                        st.rerun()
-                with btn2:
-                    if st.button("＋", key=f"plus_{i}"):
-                        st.session_state.cart[i]['qty'] += 1
-                        st.rerun()
-                with btn3:
-                    if st.button("🗑", key=f"remove_{i}"):
-                        st.session_state.cart.pop(i)
-                        st.rerun()
-                with btn4:
+                # Quantity control: ➖ [qty] ➕ 🗑️ - aligned left, same size
+                b1, b2, b3, b4, b5, b6 = st.columns([1, 1, 1, 0.3, 1, 2.7])
+                with b1:
+                    minus_clicked = st.button("➖", key=f"minus_{i}", use_container_width=True)
+                with b2:
+                    # Display quantity - same size as buttons, no border
+                    st.markdown(f'''
+                    <div style="display:flex; align-items:center; justify-content:center; 
+                                background:transparent; border:none;
+                                height:48px; width:100%; box-sizing:border-box;
+                                font-size:20px; font-weight:bold; color:#333;">
+                        {item['qty']}
+                    </div>
+                    ''', unsafe_allow_html=True)
+                with b3:
+                    plus_clicked = st.button("➕", key=f"plus_{i}", use_container_width=True)
+                with b4:
+                    st.empty()  # Spacer between + and delete
+                with b5:
+                    del_clicked = st.button("Cancel", key=f"remove_{i}", use_container_width=True)
+                with b6:
                     st.empty()
+                
+                # Handle button clicks
+                if minus_clicked:
+                    if st.session_state.cart[i]['qty'] > 1:
+                        st.session_state.cart[i]['qty'] -= 1
+                    else:
+                        st.session_state.cart.pop(i)
+                    st.rerun()
+                if plus_clicked:
+                    st.session_state.cart[i]['qty'] += 1
+                    st.rerun()
+                if del_clicked:
+                    st.session_state.cart.pop(i)
+                    st.rerun()
+        
+        # Inject JavaScript to style quantity buttons (using components.html to run JS)
+        # Colors from COLORS config
+        minus_color = COLORS["minus_btn"]
+        plus_color = COLORS["plus_btn"]
+        delete_color = COLORS["delete_btn"]
+        
+        components.html(f"""
+        <script>
+            function styleQtyButtons() {{
+                var doc = parent.document;
+                if (!doc) return;
+                
+                doc.querySelectorAll('button').forEach(function(btn) {{
+                    var text = btn.textContent || btn.innerText || '';
+                    
+                    // ➖ ➕ buttons - no color (default/light grey)
+                    if (text.indexOf('➖') !== -1 || text.indexOf('➕') !== -1) {{
+                        btn.style.setProperty('background', '#f0f2f6', 'important');
+                        btn.style.setProperty('color', '#333', 'important');
+                        btn.style.setProperty('border', '1px solid #ccc', 'important');
+                        btn.style.setProperty('border-radius', '12px', 'important');
+                        btn.style.setProperty('min-height', '48px', 'important');
+                        btn.style.setProperty('min-width', '50px', 'important');
+                        btn.style.setProperty('font-size', '18px', 'important');
+                    }}
+                    
+                    // Cancel button - bold text
+                    if (text.indexOf('Cancel') !== -1) {{
+                        btn.style.setProperty('background', '#f0f2f6', 'important');
+                        btn.style.setProperty('color', '#333', 'important');
+                        btn.style.setProperty('border', '1px solid #ccc', 'important');
+                        btn.style.setProperty('border-radius', '12px', 'important');
+                        btn.style.setProperty('min-height', '48px', 'important');
+                        btn.style.setProperty('min-width', '50px', 'important');
+                        btn.style.setProperty('font-size', '16px', 'important');
+                        btn.style.setProperty('font-weight', 'bold', 'important');
+                        // Also style the p element inside button
+                        var pTag = btn.querySelector('p');
+                        if (pTag) {{
+                            pTag.style.setProperty('font-weight', 'bold', 'important');
+                            pTag.style.setProperty('color', '#333', 'important');
+                        }}
+                    }}
+                }});
+                
+                // Fix column layout - aligned left with small gap
+                doc.querySelectorAll('[data-testid="stHorizontalBlock"]').forEach(function(block) {{
+                    var html = block.innerHTML || '';
+                    if (html.indexOf('➖') !== -1 && html.indexOf('➕') !== -1) {{
+                        block.style.display = 'flex';
+                        block.style.flexWrap = 'nowrap';
+                        block.style.gap = '8px';
+                        block.style.justifyContent = 'flex-start';
+                        
+                        var children = block.children;
+                        for (var i = 0; i < children.length; i++) {{
+                            children[i].style.flex = 'none';
+                            children[i].style.width = 'auto';
+                            children[i].style.padding = '0';
+                            children[i].style.minWidth = '0';
+                        }}
+                    }}
+                    
+                    // Cart & Order buttons - separate borders, small gap, left aligned
+                    if (html.indexOf('Cart') !== -1 && html.indexOf('Order') !== -1) {{
+                        block.style.display = 'flex';
+                        block.style.flexWrap = 'nowrap';
+                        block.style.gap = '10px';
+                        block.style.justifyContent = 'flex-start';
+                        
+                        var children = block.children;
+                        for (var i = 0; i < children.length; i++) {{
+                            children[i].style.flex = 'none';
+                            children[i].style.width = 'auto';
+                            children[i].style.padding = '0';
+                            children[i].style.minWidth = '0';
+                        }}
+                    }}
+                }});
+                
+                // Style Cart & Order buttons - separate borders, same size
+                doc.querySelectorAll('button').forEach(function(btn) {{
+                    var text = btn.textContent || btn.innerText || '';
+                    
+                    // Cart button - fully rounded, own border
+                    if (text.indexOf('Cart') !== -1) {{
+                        btn.style.setProperty('background', '#f0f2f6', 'important');
+                        btn.style.setProperty('color', '#333', 'important');
+                        btn.style.setProperty('border', '2px solid #333', 'important');
+                        btn.style.setProperty('border-radius', '25px', 'important');
+                        btn.style.setProperty('padding', '12px 25px', 'important');
+                        btn.style.setProperty('min-width', '160px', 'important');
+                        btn.style.setProperty('min-height', '50px', 'important');
+                        btn.style.setProperty('font-weight', 'bold', 'important');
+                        var pTag = btn.querySelector('p');
+                        if (pTag) {{
+                            pTag.style.setProperty('font-weight', 'bold', 'important');
+                            pTag.style.setProperty('color', '#333', 'important');
+                        }}
+                    }}
+                    
+                    // Order button - fully rounded, own border
+                    if (text.indexOf('Order') !== -1) {{
+                        btn.style.setProperty('background', 'linear-gradient(90deg, #2E8B57 0%, #9ACD32 100%)', 'important');
+                        btn.style.setProperty('color', 'white', 'important');
+                        btn.style.setProperty('border', '2px solid #333', 'important');
+                        btn.style.setProperty('border-radius', '25px', 'important');
+                        btn.style.setProperty('padding', '12px 25px', 'important');
+                        btn.style.setProperty('min-width', '160px', 'important');
+                        btn.style.setProperty('min-height', '50px', 'important');
+                        btn.style.setProperty('font-weight', 'bold', 'important');
+                        var pTag = btn.querySelector('p');
+                        if (pTag) {{
+                            pTag.style.setProperty('font-weight', 'bold', 'important');
+                            pTag.style.setProperty('color', 'white', 'important');
+                        }}
+                    }}
+                }});
+            }}
+            
+            // Run multiple times
+            styleQtyButtons();
+            setTimeout(styleQtyButtons, 100);
+            setTimeout(styleQtyButtons, 300);
+            setTimeout(styleQtyButtons, 500);
+            setInterval(styleQtyButtons, 800);
+        </script>
+        """, height=0)
         
         # Total and Order Section
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #2E86AB 0%, #1a5276 100%); 
+        <div style="background: linear-gradient(135deg, {COLORS["total_bg_start"]} 0%, {COLORS["total_bg_end"]} 100%); 
                     padding: 15px; border-radius: 10px; text-align: center; margin: 15px 0;">
             <div style="color: #fff; font-size: 1.5em; font-weight: bold;">
                 💰 Total: {format_price(total)} Ks
@@ -1368,16 +1896,18 @@ def main():
             st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
         
         # ============================================
-        # ADJACENT BUTTONS (Cart Clear & Order) - ဘောင်ကပ်လျက်ပြ
+        # ADJACENT BUTTONS (Cart Clear & Order) - ဘောင်ကပ်လျက်ပြ, ဘယ်ဘက်
         # ============================================
         # Marker div to identify these buttons
         st.markdown('<div class="cart-order-marker"></div>', unsafe_allow_html=True)
         
-        cart_col, order_col = st.columns(2)
+        cart_col, order_col, empty_col = st.columns([1, 1, 1])
         with cart_col:
             cart_clear = st.button("🗑️ Cart ရှင်းမည်", use_container_width=True, key="cart_clear_btn")
         with order_col:
             order_submit = st.button("📤 Order ပို့မည်", use_container_width=True, type="primary", key="order_submit_btn")
+        with empty_col:
+            st.empty()
         
         if cart_clear:
             st.session_state.cart = []
@@ -1406,13 +1936,15 @@ def main():
                     'total': total,
                     'items': items_str
                 }
+                st.session_state.last_order_id = order_id  # For "preparing" notification when admin updates
                 st.session_state.cart = []
                 st.balloons()
                 st.rerun()
     
-    st.divider()
-    st.caption("📱 QR Code Menu System | ⚡ Powered by Firebase")
+    # Footer - only show for admin
+    if st.session_state.is_admin:
+        st.divider()
+        st.caption("📱 QR Code Menu System | ⚡ Powered by Firebase")
 
 if __name__ == "__main__":
     main()
-cd
