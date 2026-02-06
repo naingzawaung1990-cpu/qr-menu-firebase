@@ -139,21 +139,25 @@ def save_store(db, store_data):
         'bg_color': store_data.get('bg_color', ''),
         'bg_image': store_data.get('bg_image', ''),
         'bg_counter': store_data.get('bg_counter', False),
+        'active': store_data.get('active', True),
         'created_at': firestore.SERVER_TIMESTAMP
     })
     clear_all_cache()
 
 def update_store(db, store_id, new_data):
     """Update store"""
-    db.collection('stores').document(store_id).update({
+    upd = {
         'store_name': new_data['store_name'],
         'admin_key': new_data['admin_key'],
         'logo': new_data.get('logo', '☕'),
         'subtitle': new_data.get('subtitle', 'Food & Drinks'),
         'bg_color': new_data.get('bg_color', ''),
         'bg_image': new_data.get('bg_image', ''),
-        'bg_counter': new_data.get('bg_counter', False)
-    })
+        'bg_counter': new_data.get('bg_counter', False),
+    }
+    if 'active' in new_data:
+        upd['active'] = new_data['active']
+    db.collection('stores').document(store_id).update(upd)
     clear_all_cache()
 
 def delete_store(db, store_id):
@@ -282,6 +286,43 @@ def get_daily_sales(db, store_id):
         return data.get('total', 0), data.get('order_count', 0)
     return 0, 0
 
+
+def clear_all_daily_sales(db, store_id):
+    """နေ့စဉ်ရောင်းရငွေ အားလုံး ဖျက် (စမ်းသပ်အတွက်)"""
+    ref = db.collection('stores').document(store_id).collection('daily_sales')
+    deleted = 0
+    for doc in ref.stream():
+        doc.reference.delete()
+        deleted += 1
+    return deleted
+
+
+def load_daily_sales_history(db, store_id, last_n_days=365):
+    """နေ့စဉ်ရောင်းရငွေ စာရင်း - ရက်စွဲ၊ တန်ဖိုး၊ order အရေအတွက်။ last_n_days=1 ဆိုရင် ယနေ့တစ်ရက်တည်း"""
+    from datetime import timedelta
+    today = datetime.now().strftime("%Y-%m-%d")
+    if last_n_days == 1:
+        # ယနေ့ ရွေးရင် ယနေ့တစ်ရက်ပဲ
+        cutoff_start = today
+        cutoff_end = today
+    else:
+        cutoff_start = (datetime.now() - timedelta(days=last_n_days)).strftime("%Y-%m-%d")
+        cutoff_end = today
+    ref = db.collection('stores').document(store_id).collection('daily_sales')
+    docs = ref.stream()
+    out = []
+    for doc in docs:
+        if cutoff_start <= doc.id <= cutoff_end:
+            d = doc.to_dict()
+            out.append({
+                'date': doc.id,
+                'total': d.get('total', 0),
+                'order_count': d.get('order_count', 0)
+            })
+    out.sort(key=lambda x: x['date'], reverse=True)
+    return out
+
+
 # ============================================
 # AUTO CLEANUP FUNCTIONS
 # ============================================
@@ -309,11 +350,10 @@ def auto_cleanup_completed_orders(db, store_id):
     return deleted_count
 
 def auto_cleanup_old_daily_sales(db, store_id):
-    """Auto delete daily_sales older than 30 days"""
+    """Auto delete daily_sales older than 400 days (တစ်နှစ်ထက် ရှေးကျတာပဲ ဖျက် - နေ့စဉ်ရောင်းရငွေ ၁နှစ်ပြမယ်)"""
     from datetime import timedelta
     
-    # Calculate date 30 days ago
-    cutoff_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    cutoff_date = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
     
     daily_sales_ref = db.collection('stores').document(store_id).collection('daily_sales')
     
@@ -324,7 +364,6 @@ def auto_cleanup_old_daily_sales(db, store_id):
     for sale in all_sales:
         sale_date = sale.id  # Document ID is the date (e.g., "2026-01-01")
         
-        # Delete if older than 30 days
         if sale_date < cutoff_date:
             sale.reference.delete()
             deleted_count += 1
@@ -515,6 +554,8 @@ if 'collapse_sidebar_after_login' not in st.session_state:
     st.session_state.collapse_sidebar_after_login = False  # login ပြီးရင် sidebar auto collapse
 if 'confirm_clear_history' not in st.session_state:
     st.session_state.confirm_clear_history = False
+if 'confirm_clear_all_history' not in st.session_state:
+    st.session_state.confirm_clear_all_history = False
 
 SUPER_ADMIN_KEY = "superadmin123"
 
@@ -869,17 +910,45 @@ def main():
         else:
             st.sidebar.success("👨‍💼 Admin Mode")
         
-        # View Mode Toggle for Admin
+        # View Mode Toggle for Admin (အဝိုင်းမဟုတ်ပဲ စာသားနှိပ်လည်း ပြောင်းအောင် button သုံး)
         st.sidebar.divider()
-        view_mode = st.sidebar.radio(
-            "📺 View Mode",
-            ["🍽️ Menu", "🖥️ Counter Dashboard"],
-            index=0 if st.session_state.view_mode == 'menu' else 1
-        )
-        new_view_mode = 'menu' if view_mode == "🍽️ Menu" else 'counter'
-        if new_view_mode != st.session_state.view_mode:
-            st.session_state.collapse_sidebar_after_login = True
-        st.session_state.view_mode = new_view_mode
+        st.sidebar.caption("📺 View Mode")
+        # Super Admin မှာ Counter Dashboard မရှိတော့ လမ်းလွဲမရအောင် counter ဆိုရင် menu ပြောင်း
+        if st.session_state.get('is_super_admin') and st.session_state.view_mode == 'counter':
+            st.session_state.view_mode = 'menu'
+        if st.session_state.get('is_super_admin'):
+            # Super Admin အတွက် Counter Dashboard မပါဘူး - Menu နဲ့ Super Admin ပဲ
+            v_menu = st.session_state.view_mode == 'menu'
+            v_super = st.session_state.view_mode == 'superadmin'
+            col_a, col_b = st.sidebar.columns(2)
+            with col_a:
+                if st.button("🍽️ Menu", use_container_width=True, type="primary" if v_menu else "secondary", key="vm_menu"):
+                    if not v_menu:
+                        st.session_state.collapse_sidebar_after_login = True
+                        st.session_state.view_mode = 'menu'
+                    st.rerun()
+            with col_b:
+                if st.button("👑 Super Admin", use_container_width=True, type="primary" if v_super else "secondary", key="vm_superadmin"):
+                    if not v_super:
+                        st.session_state.collapse_sidebar_after_login = True
+                        st.session_state.view_mode = 'superadmin'
+                    st.rerun()
+        else:
+            v_menu = st.session_state.view_mode == 'menu'
+            v_counter = st.session_state.view_mode == 'counter'
+            col_a, col_b = st.sidebar.columns(2)
+            with col_a:
+                if st.button("🍽️ Menu", use_container_width=True, type="primary" if v_menu else "secondary", key="vm_menu"):
+                    if not v_menu:
+                        st.session_state.collapse_sidebar_after_login = True
+                        st.session_state.view_mode = 'menu'
+                    st.rerun()
+            with col_b:
+                if st.button("🖥️ Counter", use_container_width=True, type="primary" if v_counter else "secondary", key="vm_counter"):
+                    if not v_counter:
+                        st.session_state.collapse_sidebar_after_login = True
+                        st.session_state.view_mode = 'counter'
+                    st.rerun()
         
         if st.sidebar.button("Logout", use_container_width=True):
             st.session_state.collapse_sidebar_after_login = True
@@ -932,6 +1001,7 @@ def main():
                     new_no_bg_image = st.checkbox("Background ပုံ မသုံးပါ (No background image)", value=True, help="အမှတ်သွားရင် အရောင်ပဲ သုံးမယ်")
                     new_bg_file = st.file_uploader("Background ပုံ ကွန်ပျူတာက တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="add_bg_upload")
                     new_bg_image = st.text_input("Background Image URL", placeholder="https://example.com/bg.jpg (သို့) ပုံတင်မယ်")
+                    new_active = st.checkbox("ဆိုင်ဖွင့်မည် (Active)", value=True, help="ပိတ်ထားရင် ဆိုင်က စာရင်းမှာ ပိတ်ထားသလို ပြမယ်")
                     
                     if st.form_submit_button("➕ ဆိုင်ထည့်မည်", use_container_width=True):
                         if new_store_id and new_store_name and new_admin_key:
@@ -964,7 +1034,8 @@ def main():
                                     'logo': logo_final,
                                     'subtitle': new_subtitle.strip() or 'Food & Drinks',
                                     'bg_color': new_bg_color if new_bg_color != "#ffffff" else '',
-                                    'bg_image': bg_final
+                                    'bg_image': bg_final,
+                                    'active': new_active
                                 })
                                 st.success(f"✅ '{new_store_name}' ထည့်ပြီးပါပြီ။")
                                 st.rerun()
@@ -1111,6 +1182,7 @@ def main():
                         edit_bg_file = st.file_uploader("Background ပုံ ကွန်ပျူတာက တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="edit_bg_upload")
                         edit_bg_image = st.text_input("Background Image URL", value="" if _is_image_url(cur_bg) else cur_bg, placeholder="https://... (သို့) ပုံတင်မယ်")
                         edit_bg_counter = st.checkbox("Counter Dashboard မှာလည်း Background ပြောင်းမယ်", value=current_store.get('bg_counter', False))
+                        edit_active = st.checkbox("ဆိုင်ဖွင့်မည် (Active)", value=current_store.get('active', True), help="ပိတ်ထားရင် ဆိုင်က စာရင်းမှာ ပိတ်ထားသလို ပြမယ်")
                         st.caption("💡 Image ထည့်ရင် Color ထက် Image ကို ဦးစားပေးမယ်")
                         
                         if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
@@ -1143,7 +1215,8 @@ def main():
                                     'subtitle': edit_subtitle.strip() or 'Food & Drinks',
                                     'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
                                     'bg_image': bg_final.strip() if not edit_no_bg_image else '',
-                                    'bg_counter': edit_bg_counter
+                                    'bg_counter': edit_bg_counter,
+                                    'active': edit_active
                                 })
                                 st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
                                 st.rerun()
@@ -1234,6 +1307,72 @@ def main():
     # ============================================
     # MAIN CONTENT
     # ============================================
+    # Super Admin Dashboard (all stores overview)
+    if st.session_state.get('is_super_admin') and st.session_state.get('view_mode') == 'superadmin':
+        st.title("👑 Super Admin Dashboard")
+        st.caption("ဆိုင်အားလုံး စာရင်း၊ ယနေ့ ရောင်းရငွေ၊ Active ဖွင့်/ပိတ်")
+        db = firestore.client()
+        all_stores = load_stores(db_id)
+        today = datetime.now().strftime("%Y-%m-%d")
+        total_sales_today = 0
+        total_orders_today = 0
+        active_count = sum(1 for s in all_stores if s.get('active', True))
+        for s in all_stores:
+            hist = load_daily_sales_history(db, s['store_id'], last_n_days=1)
+            day = hist[0] if hist and hist[0]['date'] == today else None
+            s['_today_total'] = day['total'] if day else 0
+            s['_today_orders'] = day['order_count'] if day else 0
+            total_sales_today += s['_today_total']
+            total_orders_today += s['_today_orders']
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("စုစုပေါင်း ဆိုင်", len(all_stores))
+        with c2:
+            st.metric("ဖွင့်ထားသော ဆိုင် (Active)", active_count)
+        with c3:
+            st.metric("ယနေ့ စုစုပေါင်း ရောင်းရငွေ", f"{total_sales_today:,.0f} Ks")
+        st.divider()
+        for s in all_stores:
+            is_active = s.get('active', True)
+            label = f"{s['store_name']} ({s['store_id']}) {'🟢' if is_active else '🔴'}"
+            with st.expander(label, expanded=False):
+                pw = s.get('admin_key', '') or ''
+                st.text(f"Store ID: {s['store_id']}")
+                st.text(f"Password: {pw}")
+                st.text(f"Active: {'ဖွင့်ထား' if is_active else 'ပိတ်ထား'}")
+                st.text(f"ယနေ့ ရောင်းရငွေ: {s['_today_total']:,.0f} Ks | ယနေ့ Order: {s['_today_orders']}")
+                btn_edit, btn_qr, btn_toggle = st.columns(3)
+                with btn_edit:
+                    if st.button("ပြင်မည်", key=f"sa_edit_{s['store_id']}", use_container_width=True):
+                        st.session_state.current_store = s
+                        st.session_state.view_mode = 'menu'
+                        load_stores.clear()
+                        st.rerun()
+                with btn_qr:
+                    if st.button("QR", key=f"sa_qr_{s['store_id']}", use_container_width=True):
+                        st.session_state.current_store = s
+                        st.session_state.view_mode = 'menu'
+                        load_stores.clear()
+                        st.rerun()
+                with btn_toggle:
+                    toggle_label = "ပိတ်မည်" if is_active else "ဖွင့်မည်"
+                    if st.button(toggle_label, key=f"sa_toggle_{s['store_id']}", use_container_width=True):
+                        update_store(db, s['store_id'], {
+                            'store_name': s['store_name'],
+                            'admin_key': s.get('admin_key', ''),
+                            'logo': s.get('logo', '☕'),
+                            'subtitle': s.get('subtitle', ''),
+                            'bg_color': s.get('bg_color', ''),
+                            'bg_image': s.get('bg_image', ''),
+                            'bg_counter': s.get('bg_counter', False),
+                            'active': not is_active
+                        })
+                        load_stores.clear()
+                        st.rerun()
+        if not all_stores:
+            st.info("ဆိုင်မရှိသေးပါ။ Menu view သို့သွားပြီး ဆိုင်အသစ်ထည့်ပါ။")
+        return
+    
     if not current_store:
         st.title("📱 QR Code Menu System")
         st.info("ဆိုင်မရှိသေးပါ။ Super Admin Login ဝင်ပြီး ဆိုင်အသစ်ထည့်ပါ။")
@@ -1302,18 +1441,50 @@ def main():
             play_notification_sound()
         st.session_state.last_pending_count = pending_count
         
-        # Daily Sales Total
-        daily_total, daily_order_count = get_daily_sales(db, store_id)
-        today_date = datetime.now().strftime("%Y-%m-%d")
-        
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #2E86AB 0%, #1a5276 100%); 
-                    padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 20px;">
-            <div style="color: #fff; font-size: 1em; opacity: 0.9;">📅 {today_date} ရောင်းရငွေ</div>
-            <div style="color: #fff; font-size: 2.5em; font-weight: bold;">{format_price(daily_total)} Ks</div>
-            <div style="color: #fff; font-size: 1em; opacity: 0.8; margin-top: 5px;">✅ ပြီးဆုံး Order: {daily_order_count} ခု</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # ပထမပုံစံ: နေ့စဉ်ရောင်းရငွေ ရွေးချယ်မှု + expander (ဒုတိယပုံ ယနေ့ကတ်ပြား မထည့်တော့ပါ)
+        period_options = {
+            "ယနေ့": 1,
+            "တစ်ပတ် (၇ ရက်)": 7,
+            "တစ်လ (၃၀ရက်)": 30,
+            "တစ်နှစ် (၃၆၅ ရက်)": 365,
+        }
+        period_label = st.selectbox(
+            "📊 နေ့စဉ်ရောင်းရငွေ ကြည့်မယ်",
+            options=list(period_options.keys()),
+            index=1,
+            key="sales_period"
+        )
+        days = period_options[period_label]
+        sales_list = load_daily_sales_history(db, store_id, last_n_days=days)
+        grand_total = sum(s['total'] for s in sales_list)
+        grand_orders = sum(s['order_count'] for s in sales_list)
+        # အပေါ်က စုစုပေါင်း - bold + အနီရောင် (expander label မှာ HTML မရလို့ သီးသန့်ပြမယ်)
+        st.markdown(
+            f"<div style='margin-bottom:6px'><strong>စုစုပေါင်း:</strong> <span style='color:#c0392b;font-weight:700'>{format_price(grand_total)} Ks</span></div>",
+            unsafe_allow_html=True
+        )
+        # နှိပ်မှ ဖွင့်အောင် expanded=False (refresh ၁၀စက္ကန့်မှာ မဖွင့်သွားအောင်)
+        with st.expander("📅 ရက်စွဲအလိုက် ကြည့်မယ်", expanded=False):
+            if not sales_list:
+                st.info("ဒီကာလအတွင်း ရောင်းရငွေ မရှိသေးပါ။")
+            else:
+                st.markdown(
+                    f"<strong>စုစုပေါင်း:</strong> <span style='color:#c0392b;font-weight:700'>{format_price(grand_total)} Ks</span>",
+                    unsafe_allow_html=True
+                )
+                st.divider()
+                for s in sales_list:
+                    # ရက်စွဲ YYYY-MM-DD -> DD-MM-YYYY
+                    parts = s['date'].split('-')
+                    date_display = f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts) == 3 else s['date']
+                    col1, col2, col3 = st.columns([2, 2, 2])
+                    with col1:
+                        st.write(f"📅 **{date_display}**")
+                    with col2:
+                        st.write(f"**{format_price(s['total'])} Ks**")
+                    with col3:
+                        st.write(f"✅ {s['order_count']} ခု")
+                    st.divider()
         
         # Filter orders by status
         col1, col2 = st.columns(2)
@@ -1440,6 +1611,32 @@ def main():
                             st.session_state.confirm_clear_history = False
                             st.toast("✅ History ရှင်းပြီးပါပြီ")
                             st.rerun()
+        
+        # စမ်းသပ်အတွက် History ပြန်ဖျက်မည် (Order History + နေ့စဉ်ရောင်းရငွေ အားလုံး)
+        st.divider()
+        with st.expander("⚠️ စမ်းသပ်အတွက် History ပြန်ဖျက်မည်", expanded=False):
+            st.caption("Order History နဲ့ နေ့စဉ်ရောင်းရငွေ စာရင်း အားလုံး ဖျက်ပစ်မယ်။ စမ်းနေတဲ့အခါသာ သုံးပါ။")
+            if not st.session_state.get('confirm_clear_all_history'):
+                if st.button("🗑️ History အားလုံး ပြန်ဖျက်မည်", use_container_width=True, type="secondary"):
+                    st.session_state.confirm_clear_all_history = True
+                    st.rerun()
+            else:
+                st.warning("သေချာပါသလား? Order History နဲ့ နေ့စဉ်ရောင်းရငွေ အားလုံး ပျက်သွားပါမယ်။")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✅ ဟုတ်ကဲ့ ဖျက်မည်", use_container_width=True, type="primary"):
+                        # Order History ဖျက်
+                        for order in completed_orders:
+                            delete_order(db, store_id, order['order_id'])
+                        # နေ့စဉ်ရောင်းရငွေ ဖျက်
+                        sales_deleted = clear_all_daily_sales(db, store_id)
+                        st.session_state.confirm_clear_all_history = False
+                        st.toast(f"✅ History အားလုံး ဖျက်ပြီး (နေ့စဉ်ရောင်းရငွေ {sales_deleted} ရက်)")
+                        st.rerun()
+                with c2:
+                    if st.button("❌ မဖျက်တော့ပါ", use_container_width=True):
+                        st.session_state.confirm_clear_all_history = False
+                        st.rerun()
         
         return  # Don't show menu in counter mode
     
