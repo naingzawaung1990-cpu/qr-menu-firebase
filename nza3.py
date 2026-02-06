@@ -552,6 +552,10 @@ if 'preparing_sound_played' not in st.session_state:
     st.session_state.preparing_sound_played = None  # order_id that we already played preparing sound for
 if 'collapse_sidebar_after_login' not in st.session_state:
     st.session_state.collapse_sidebar_after_login = False  # login ပြီးရင် sidebar auto collapse
+if 'sidebar_collapsed_on_load' not in st.session_state:
+    st.session_state.sidebar_collapsed_on_load = False  # page ဖွင့်ဖွင့်ချင်း sidebar auto collapse တစ်ခါပဲ
+if 'collapse_on_counter_view' not in st.session_state:
+    st.session_state.collapse_on_counter_view = False  # Counter နှိပ်ပြီး ဒီ view ရောက်ရင် sidebar ပိတ်မယ်
 if 'confirm_clear_history' not in st.session_state:
     st.session_state.confirm_clear_history = False
 if 'confirm_clear_all_history' not in st.session_state:
@@ -645,6 +649,11 @@ def main():
     query_params = st.query_params
     url_store_id = query_params.get("store", None)
     is_customer_mode = url_store_id is not None and not st.session_state.is_admin
+    
+    # Page ဖွင့်ဖွင့်ချင်း sidebar auto collapse (customer mode မဟုတ်ရင် တစ်ခါပဲ)
+    if not is_customer_mode and not st.session_state.sidebar_collapsed_on_load:
+        st.session_state.collapse_sidebar_after_login = True
+        st.session_state.sidebar_collapsed_on_load = True
     
     # Custom styling for customers (using COLORS config)
     if not st.session_state.is_admin:
@@ -923,14 +932,14 @@ def main():
             col_a, col_b = st.sidebar.columns(2)
             with col_a:
                 if st.button("🍽️ Menu", use_container_width=True, type="primary" if v_menu else "secondary", key="vm_menu"):
+                    st.session_state.collapse_sidebar_after_login = True  # Menu နှိပ်တာနဲ့ sidebar auto collapse
                     if not v_menu:
-                        st.session_state.collapse_sidebar_after_login = True
                         st.session_state.view_mode = 'menu'
                     st.rerun()
             with col_b:
                 if st.button("👑 Super Admin", use_container_width=True, type="primary" if v_super else "secondary", key="vm_superadmin"):
+                    st.session_state.collapse_sidebar_after_login = True  # Super Admin နှိပ်တာနဲ့ sidebar auto collapse
                     if not v_super:
-                        st.session_state.collapse_sidebar_after_login = True
                         st.session_state.view_mode = 'superadmin'
                     st.rerun()
         else:
@@ -939,14 +948,14 @@ def main():
             col_a, col_b = st.sidebar.columns(2)
             with col_a:
                 if st.button("🍽️ Menu", use_container_width=True, type="primary" if v_menu else "secondary", key="vm_menu"):
+                    st.session_state.collapse_sidebar_after_login = True  # Menu နှိပ်တာနဲ့ sidebar auto collapse
                     if not v_menu:
-                        st.session_state.collapse_sidebar_after_login = True
                         st.session_state.view_mode = 'menu'
                     st.rerun()
             with col_b:
                 if st.button("🖥️ Counter", use_container_width=True, type="primary" if v_counter else "secondary", key="vm_counter"):
+                    st.session_state.collapse_on_counter_view = True  # Counter view ရောက်ရင် sidebar ပိတ်မယ် (တစ်ကြိမ်ပဲ)
                     if not v_counter:
-                        st.session_state.collapse_sidebar_after_login = True
                         st.session_state.view_mode = 'counter'
                     st.rerun()
         
@@ -958,7 +967,7 @@ def main():
             st.session_state.view_mode = 'menu'
             st.rerun()
     
-    # Login / View mode ပြောင်း / Logout ပြီးတိုင်း sidebar auto collapse (admin မဟုတ်ရင်လည်း လုပ်မယ်)
+    # Login / View mode ပြောင်း / Logout ပြီးတိုင်း sidebar auto collapse (တစ်ကြိမ်ပဲ - မှန်မှန်ပိတ်အောင်)
     if st.session_state.get('collapse_sidebar_after_login'):
         st.session_state.collapse_sidebar_after_login = False
         components.html("""
@@ -966,16 +975,13 @@ def main():
         (function(){
             setTimeout(function(){
                 var doc = (typeof parent !== 'undefined' && parent.document) ? parent.document : document;
+                if (!doc) return;
                 var el = doc.querySelector('[data-testid="collapsedControl"]');
                 if (!el) el = doc.querySelector('[data-testid="stSidebarCollapsedControl"]');
-                if (!el) {
-                    var sidebar = doc.querySelector('section[data-testid="stSidebar"]');
-                    if (sidebar) {
-                        var btn = sidebar.querySelector('button[aria-label]');
-                        if (btn) btn.click();
-                    }
-                } else { el.click(); }
-            }, 150);
+                if (el) { el.click(); return; }
+                var sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+                if (sidebar) { var btn = sidebar.querySelector('button[aria-label]'); if (btn) btn.click(); }
+            }, 250);
         })();
         </script>
         """, height=0)
@@ -1382,7 +1388,23 @@ def main():
     
     # Counter Dashboard View
     if st.session_state.is_admin and st.session_state.view_mode == 'counter':
-        
+        # Counter နှိပ်လိုက်တာနဲ့ sidebar auto collapse (view ရောက်ပြီးမှ ပိတ်မယ် - တစ်ကြိမ်ပဲ)
+        if st.session_state.get('collapse_on_counter_view'):
+            st.session_state.collapse_on_counter_view = False
+            components.html("""
+            <script>
+            (function(){
+                setTimeout(function(){
+                    var d = (typeof parent !== 'undefined' && parent.document) ? parent.document : document;
+                    if (!d) return;
+                    var e = d.querySelector('[data-testid="collapsedControl"]') || d.querySelector('[data-testid="stSidebarCollapsedControl"]');
+                    if (e) { e.click(); return; }
+                    var s = d.querySelector('section[data-testid="stSidebar"]');
+                    if (s) { var b = s.querySelector('button[aria-label]'); if (b) b.click(); }
+                }, 350);
+            })();
+            </script>
+            """, height=0)
         # Apply background if enabled for Counter Dashboard
         if current_store.get('bg_counter', False):
             bg_image_url = current_store.get('bg_image', '')
