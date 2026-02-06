@@ -364,7 +364,7 @@ def build_offline_menu_data_url(store, categories, items):
     subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
     logo = store.get('logo', '☕')
     if _is_image_url(logo):
-        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;" alt="">'
+        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;background:transparent;" alt="">'
     else:
         logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
 
@@ -429,7 +429,7 @@ def build_offline_menu_data_url_per_category(store, category_name, items):
     subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
     logo = store.get('logo', '☕')
     if _is_image_url(logo):
-        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;" alt="">'
+        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;background:transparent;" alt="">'
     else:
         logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
     lines = [
@@ -869,28 +869,6 @@ def main():
         else:
             st.sidebar.success("👨‍💼 Admin Mode")
         
-        # Login ပြီးတာနဲ့ sidebar ကို auto collapse (Streamlit API မရှိလို့ JS သုံး)
-        if st.session_state.get('collapse_sidebar_after_login'):
-            st.session_state.collapse_sidebar_after_login = False
-            components.html("""
-            <script>
-            (function(){
-                setTimeout(function(){
-                    var doc = (typeof parent !== 'undefined' && parent.document) ? parent.document : document;
-                    var el = doc.querySelector('[data-testid="collapsedControl"]');
-                    if (!el) el = doc.querySelector('[data-testid="stSidebarCollapsedControl"]');
-                    if (!el) {
-                        var sidebar = doc.querySelector('section[data-testid="stSidebar"]');
-                        if (sidebar) {
-                            var btn = sidebar.querySelector('button[aria-label]');
-                            if (btn) btn.click();
-                        }
-                    } else { el.click(); }
-                }, 150);
-            })();
-            </script>
-            """, height=0)
-        
         # View Mode Toggle for Admin
         st.sidebar.divider()
         view_mode = st.sidebar.radio(
@@ -898,14 +876,40 @@ def main():
             ["🍽️ Menu", "🖥️ Counter Dashboard"],
             index=0 if st.session_state.view_mode == 'menu' else 1
         )
-        st.session_state.view_mode = 'menu' if view_mode == "🍽️ Menu" else 'counter'
+        new_view_mode = 'menu' if view_mode == "🍽️ Menu" else 'counter'
+        if new_view_mode != st.session_state.view_mode:
+            st.session_state.collapse_sidebar_after_login = True
+        st.session_state.view_mode = new_view_mode
         
         if st.sidebar.button("Logout", use_container_width=True):
+            st.session_state.collapse_sidebar_after_login = True
             st.session_state.is_admin = False
             st.session_state.is_super_admin = False
             st.session_state.editing_id = None
             st.session_state.view_mode = 'menu'
             st.rerun()
+    
+    # Login / View mode ပြောင်း / Logout ပြီးတိုင်း sidebar auto collapse (admin မဟုတ်ရင်လည်း လုပ်မယ်)
+    if st.session_state.get('collapse_sidebar_after_login'):
+        st.session_state.collapse_sidebar_after_login = False
+        components.html("""
+        <script>
+        (function(){
+            setTimeout(function(){
+                var doc = (typeof parent !== 'undefined' && parent.document) ? parent.document : document;
+                var el = doc.querySelector('[data-testid="collapsedControl"]');
+                if (!el) el = doc.querySelector('[data-testid="stSidebarCollapsedControl"]');
+                if (!el) {
+                    var sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+                    if (sidebar) {
+                        var btn = sidebar.querySelector('button[aria-label]');
+                        if (btn) btn.click();
+                    }
+                } else { el.click(); }
+            }, 150);
+        })();
+        </script>
+        """, height=0)
     
     # Customer Cart - moved to bottom of page for customer mode (see below in main content)
     
@@ -925,6 +929,7 @@ def main():
                     new_subtitle = st.text_input("Subtitle", value="Food & Drinks")
                     st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
                     new_bg_color = st.color_picker("Background Color", value="#ffffff")
+                    new_no_bg_image = st.checkbox("Background ပုံ မသုံးပါ (No background image)", value=True, help="အမှတ်သွားရင် အရောင်ပဲ သုံးမယ်")
                     new_bg_file = st.file_uploader("Background ပုံ ကွန်ပျူတာက တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="add_bg_upload")
                     new_bg_image = st.text_input("Background Image URL", placeholder="https://example.com/bg.jpg (သို့) ပုံတင်မယ်")
                     
@@ -939,15 +944,18 @@ def main():
                                 else:
                                     st.error("⚠️ Logo ပုံ ၂၀၀KB ထက် မကြီးပါစေနဲ့။")
                                     logo_ok = False
-                            bg_final = new_bg_image.strip()
                             bg_ok = True
-                            if new_bg_file:
-                                data_url_bg = _uploaded_image_to_data_url(new_bg_file, max_kb=450)
-                                if data_url_bg:
-                                    bg_final = data_url_bg
-                                else:
-                                    st.error("⚠️ Background ပုံ ၄၅၀KB ထက် မကြီးပါစေနဲ့။")
-                                    bg_ok = False
+                            if new_no_bg_image:
+                                bg_final = ""
+                            else:
+                                bg_final = new_bg_image.strip()
+                                if new_bg_file:
+                                    data_url_bg = _uploaded_image_to_data_url(new_bg_file, max_kb=450)
+                                    if data_url_bg:
+                                        bg_final = data_url_bg
+                                    else:
+                                        st.error("⚠️ Background ပုံ ၄၅၀KB ထက် မကြီးပါစေနဲ့။")
+                                        bg_ok = False
                             if logo_ok and bg_ok:
                                 save_store(db, {
                                     'store_id': new_store_id.strip().lower(),
@@ -1098,6 +1106,7 @@ def main():
                         edit_subtitle = st.text_input("Subtitle", value=current_store.get('subtitle', 'Food & Drinks'))
                         st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
                         edit_bg_color = st.color_picker("Background Color", value=current_store.get('bg_color', '#ffffff') or '#ffffff')
+                        edit_no_bg_image = st.checkbox("Background ပုံ မသုံးပါ (No background image)", value=not bool(current_store.get('bg_image', '').strip()), help="အမှတ်သွားရင် ပုံဖယ်ပြီး အရောင်ပဲ သုံးမယ်")
                         cur_bg = current_store.get('bg_image', '')
                         edit_bg_file = st.file_uploader("Background ပုံ ကွန်ပျူတာက တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="edit_bg_upload")
                         edit_bg_image = st.text_input("Background Image URL", value="" if _is_image_url(cur_bg) else cur_bg, placeholder="https://... (သို့) ပုံတင်မယ်")
@@ -1107,6 +1116,7 @@ def main():
                         if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
                             logo_final = edit_logo.strip() or cur_logo or "☕"
                             logo_ok = True
+                            bg_ok = True
                             if edit_logo_file:
                                 data_url_logo = _uploaded_image_to_data_url(edit_logo_file, max_kb=200)
                                 if data_url_logo:
@@ -1114,15 +1124,17 @@ def main():
                                 else:
                                     st.error("⚠️ Logo ပုံ ၂၀၀KB ထက် မကြီးပါစေနဲ့။")
                                     logo_ok = False
-                            bg_final = edit_bg_image.strip() or cur_bg
-                            bg_ok = True
-                            if edit_bg_file:
-                                data_url_bg = _uploaded_image_to_data_url(edit_bg_file, max_kb=450)
-                                if data_url_bg:
-                                    bg_final = data_url_bg
-                                else:
-                                    st.error("⚠️ Background ပုံ ၄၅၀KB ထက် မကြီးပါစေနဲ့။")
-                                    bg_ok = False
+                            if edit_no_bg_image:
+                                bg_final = ""
+                            else:
+                                bg_final = edit_bg_image.strip() or cur_bg
+                                if edit_bg_file:
+                                    data_url_bg = _uploaded_image_to_data_url(edit_bg_file, max_kb=450)
+                                    if data_url_bg:
+                                        bg_final = data_url_bg
+                                    else:
+                                        st.error("⚠️ Background ပုံ ၄၅၀KB ထက် မကြီးပါစေနဲ့။")
+                                        bg_ok = False
                             if logo_ok and bg_ok:
                                 update_store(db, current_store['store_id'], {
                                     'store_name': edit_store_name.strip(),
@@ -1130,7 +1142,7 @@ def main():
                                     'logo': logo_final,
                                     'subtitle': edit_subtitle.strip() or 'Food & Drinks',
                                     'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
-                                    'bg_image': bg_final,
+                                    'bg_image': bg_final.strip() if not edit_no_bg_image else '',
                                     'bg_counter': edit_bg_counter
                                 })
                                 st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
@@ -1487,7 +1499,7 @@ def main():
     is_image = _is_image_url(logo_value)
     
     if is_image:
-        logo_html = f'<img src="{html.escape(logo_value)}" style="width:150px; height:150px; object-fit:contain; border-radius:10px;" alt="Logo">'
+        logo_html = f'<img src="{html.escape(logo_value)}" style="width:150px; height:150px; object-fit:contain; border-radius:10px; background:transparent;" alt="Logo">'
     else:
         logo_html = f'<span style="font-size:8em;">{logo_value}</span>'
     
@@ -1501,6 +1513,10 @@ def main():
         display: flex;
         justify-content: center;
         margin-bottom: 10px;
+        background: transparent;
+    }}
+    .header-logo img {{
+        background: transparent !important;
     }}
     .header-title {{
         font-size: 3em;
@@ -1524,6 +1540,27 @@ def main():
     
     # Show order success alert (ပြင်ဆင်နေပါပြီ noti ရောက်ရင် ဒီ box ပျောက်မယ်)
     if st.session_state.order_success and not st.session_state.is_admin:
+        # မှာပြီးတာနဲ့ အပေါ်ကို လိမ့်စေ - noti ချက်ချင်းမြင်ရအောင်
+        components.html("""
+        <script>
+        (function(){
+            var scrollToTop = function(){
+                try { window.scrollTo(0, 0); } catch(e) {}
+                try { document.documentElement.scrollTop = 0; document.body.scrollTop = 0; } catch(e) {}
+                try {
+                    var doc = (typeof parent !== 'undefined' && parent.document) ? parent.document : document;
+                    var root = doc.querySelector('[data-testid="stAppViewContainer"]') || doc.querySelector('.main');
+                    if (root) root.scrollTop = 0;
+                    if (typeof parent !== 'undefined' && parent.window) parent.window.scrollTo(0, 0);
+                } catch(e) {}
+            };
+            scrollToTop();
+            setTimeout(scrollToTop, 100);
+            setTimeout(scrollToTop, 400);
+        })();
+        </script>
+        """, height=0)
+        
         order_info = st.session_state.order_success
         order_status = get_order_status(db, current_store['store_id'], order_info['order_id']) if current_store else None
         
