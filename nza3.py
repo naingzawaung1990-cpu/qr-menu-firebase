@@ -1450,9 +1450,6 @@ def main():
             <div style="color: #fff; font-size: 1em; opacity: 0.9; margin-top: 10px;">
                 🪑 စားပွဲ: {order_info['table_no']} | 💰 {format_price(order_info['total'])} Ks
             </div>
-            <div style="color: #fff; font-size: 0.9em; opacity: 0.8; margin-top: 15px;">
-                ခဏစောင့်ပါ။ မကြာမီ ရောက်ပါမည်။
-            </div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1527,20 +1524,6 @@ def main():
         elif status == 'completed':
             st.session_state.last_order_id = None
         elif status == 'preparing':
-            # Show banner
-            st.markdown("""
-            <div style="background: linear-gradient(135deg, #f0ad4e 0%, #ec971f 100%); 
-                        padding: 18px 24px; border-radius: 15px; text-align: center; margin: 15px 0;
-                        box-shadow: 0 4px 15px rgba(240, 173, 78, 0.4); border: 2px solid #eea236;">
-                <div style="font-size: 2em; margin-bottom: 8px;">👨‍🍳</div>
-                <div style="color: #fff; font-size: 1.4em; font-weight: bold;">
-                    ပြင်ဆင်နေပါပြီ ခဏစောင့်ပါ
-                </div>
-                <div style="color: rgba(255,255,255,0.95); font-size: 1em; margin-top: 6px;">
-                    Order ကို စားဖို့ ပြင်ဆင်နေပါပြီ။ မကြာမီ ရောက်ပါမည်။
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
             load_orders.clear()
             st_autorefresh(interval=8000, limit=None, key="customer_preparing_refresh")
         elif status == 'pending':
