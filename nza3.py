@@ -494,8 +494,6 @@ if 'auto_refresh' not in st.session_state:
     st.session_state.auto_refresh = True
 if 'order_success' not in st.session_state:
     st.session_state.order_success = None
-if 'last_order_id' not in st.session_state:
-    st.session_state.last_order_id = None  # For customer: show "preparing" noti when admin marks order
 if 'confirm_clear_history' not in st.session_state:
     st.session_state.confirm_clear_history = False
 
@@ -604,7 +602,13 @@ def main():
         components.html(embed_redirect_js, height=0)
         st.markdown("""
         <style>
-        /* Sidebar stays visible (collapsed) so Admin can expand and login */
+        /* Hide sidebar completely */
+        [data-testid="stSidebar"] {
+            display: none !important;
+        }
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none !important;
+        }
         
         /* Hide header toolbar and menu */
         [data-testid="stHeader"] {
@@ -834,10 +838,11 @@ def main():
         """, unsafe_allow_html=True)
     
     # ============================================
-    # SIDEBAR (always show so Admin can login even from store URL)
+    # SIDEBAR (Admin only)
     # ============================================
-    st.sidebar.title("📱 QR Code Menu System")
-    st.sidebar.caption("⚡ Powered by Firebase")
+    if not is_customer_mode:
+        st.sidebar.title("📱 QR Code Menu System")
+        st.sidebar.caption("⚡ Powered by Firebase")
     
     url_table = query_params.get("table", None)
     
@@ -878,8 +883,8 @@ def main():
     if not is_customer_mode:
         st.sidebar.divider()
     
-    # Admin Login (sidebar - show even in customer view so admin can expand sidebar and login)
-    if not st.session_state.is_admin:
+    # Admin Login (sidebar only for non-customer mode)
+    if not st.session_state.is_admin and not is_customer_mode:
         if store_from_url:
             with st.sidebar.expander("🔐 Admin Login", expanded=False):
                 admin_key = st.text_input("Password", type="password", key="admin_pwd")
@@ -1547,38 +1552,6 @@ def main():
     if st.session_state.table_no and not st.session_state.is_admin and not st.session_state.order_success:
         st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
     
-    # Customer: show "preparing" notification when admin clicked Preparing for their order
-    if not st.session_state.is_admin and st.session_state.last_order_id and current_store:
-        orders_for_status = load_orders(db_id, store_id)
-        my_order = next((o for o in orders_for_status if o.get('order_id') == st.session_state.last_order_id), None)
-        status = my_order.get('status') if my_order else None
-
-        if my_order is None:
-            st.session_state.last_order_id = None
-        elif status == 'completed':
-            st.session_state.last_order_id = None
-        elif status == 'preparing':
-            # Show banner
-            st.markdown("""
-            <div style="background: linear-gradient(135deg, #f0ad4e 0%, #ec971f 100%); 
-                        padding: 18px 24px; border-radius: 15px; text-align: center; margin: 15px 0;
-                        box-shadow: 0 4px 15px rgba(240, 173, 78, 0.4); border: 2px solid #eea236;">
-                <div style="font-size: 2em; margin-bottom: 8px;">👨‍🍳</div>
-                <div style="color: #fff; font-size: 1.4em; font-weight: bold;">
-                    ပြင်ဆင်နေပါပြီ ခဏစောင့်ပါ
-                </div>
-                <div style="color: rgba(255,255,255,0.95); font-size: 1em; margin-top: 6px;">
-                    Order ကို စားဖို့ ပြင်ဆင်နေပါပြီ။ မကြာမီ ရောက်ပါမည်။
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            load_orders.clear()
-            st_autorefresh(interval=8000, limit=None, key="customer_preparing_refresh")
-        elif status == 'pending':
-            # Order still pending: poll so we see "preparing" when admin clicks
-            load_orders.clear()
-            st_autorefresh(interval=5000, limit=None, key="customer_preparing_refresh")
-    
     categories = load_categories(db_id, store_id)
     items = load_menu_items(db_id, store_id)
     
@@ -1960,7 +1933,6 @@ def main():
                     'total': total,
                     'items': items_str
                 }
-                st.session_state.last_order_id = order_id  # For "preparing" notification when admin updates
                 st.session_state.cart = []
                 st.balloons()
                 st.rerun()
