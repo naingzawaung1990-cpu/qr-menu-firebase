@@ -490,6 +490,8 @@ if 'order_success' not in st.session_state:
     st.session_state.order_success = None
 if 'last_order_id' not in st.session_state:
     st.session_state.last_order_id = None  # For customer: show "preparing" noti when admin marks order
+if 'preparing_sound_played' not in st.session_state:
+    st.session_state.preparing_sound_played = None  # order_id that we already played preparing sound for
 if 'confirm_clear_history' not in st.session_state:
     st.session_state.confirm_clear_history = False
 
@@ -1468,6 +1470,32 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
+            # ပြင်ဆင်နေပါပြီ noti အသံ - တစ်ကြိမ်ပဲ ထွက်အောင်
+            if st.session_state.get('preparing_sound_played') != order_info['order_id']:
+                st.session_state.preparing_sound_played = order_info['order_id']
+                components.html("""
+                <script>
+                    (function(){
+                        const ac = new (window.AudioContext || window.webkitAudioContext)();
+                        function beep(freq, dur, delay) {
+                            setTimeout(function() {
+                                var o = ac.createOscillator();
+                                var g = ac.createGain();
+                                o.connect(g); g.connect(ac.destination);
+                                o.frequency.value = freq;
+                                o.type = 'sine';
+                                g.gain.setValueAtTime(0.25, ac.currentTime);
+                                g.gain.exponentialRampToValueAtTime(0.01, ac.currentTime + dur);
+                                o.start(ac.currentTime);
+                                o.stop(ac.currentTime + dur);
+                            }, delay);
+                        }
+                        beep(587, 0.12, 0);
+                        beep(784, 0.12, 120);
+                        beep(988, 0.2, 240);
+                    })();
+                </script>
+                """, height=0)
         elif order_status == 'completed':
             st.markdown("""
             <div style="background: linear-gradient(135deg, #5bc0de 0%, #46b8da 100%); 
