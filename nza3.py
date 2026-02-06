@@ -17,12 +17,12 @@ from firebase_admin import credentials, firestore
 # Auto-refresh
 from streamlit_autorefresh import st_autorefresh
 
-# Page config - nza2.py လို sidebar အမြဲပွဲထား
+# Page config - app ဖွင့်တာနဲ့ sidebar collapsed၊ login ပြီးရင် auto collapse
 st.set_page_config(
     page_title="QR Code Menu System",
     page_icon="📱",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # nza2.py လို - header/footer/sidebar မဖျောက်ပါ။ Sidebar အမြဲပေါ်အောင် CSS မထည့်ပါ။
@@ -363,7 +363,7 @@ def build_offline_menu_data_url(store, categories, items):
     store_name = html.escape(store.get('store_name', 'Menu'))
     subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
     logo = store.get('logo', '☕')
-    if isinstance(logo, str) and logo.startswith(('http://', 'https://')):
+    if _is_image_url(logo):
         logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;" alt="">'
     else:
         logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
@@ -428,7 +428,7 @@ def build_offline_menu_data_url_per_category(store, category_name, items):
     store_name = html.escape(store.get('store_name', 'Menu'))
     subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
     logo = store.get('logo', '☕')
-    if isinstance(logo, str) and logo.startswith(('http://', 'https://')):
+    if _is_image_url(logo):
         logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;" alt="">'
     else:
         logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
@@ -458,6 +458,25 @@ def build_offline_menu_data_url_per_category(store, category_name, items):
 def format_price(price):
     """Format price for display"""
     return f"{price:,}"
+
+
+def _uploaded_image_to_data_url(uploaded_file, max_kb=200):
+    """ကွန်ပျူတာက တင်ထားတဲ့ ပုံကို base64 data URL ပြောင်း (Firestore အတွက် အရွယ်အစား ကန့်သတ်)"""
+    if uploaded_file is None:
+        return None
+    data = uploaded_file.read()
+    if len(data) > max_kb * 1024:
+        return None
+    b64 = base64.b64encode(data).decode("ascii")
+    mime = uploaded_file.type or "image/png"
+    return f"data:{mime};base64,{b64}"
+
+
+def _is_image_url(val):
+    """ဒီ value က ပုံ URL (သို့) data URL လား"""
+    if not isinstance(val, str) or not val:
+        return False
+    return val.startswith(("http://", "https://", "data:"))
 
 # ============================================
 # SESSION STATE
@@ -492,6 +511,8 @@ if 'last_order_id' not in st.session_state:
     st.session_state.last_order_id = None  # For customer: show "preparing" noti when admin marks order
 if 'preparing_sound_played' not in st.session_state:
     st.session_state.preparing_sound_played = None  # order_id that we already played preparing sound for
+if 'collapse_sidebar_after_login' not in st.session_state:
+    st.session_state.collapse_sidebar_after_login = False  # login ပြီးရင် sidebar auto collapse
 if 'confirm_clear_history' not in st.session_state:
     st.session_state.confirm_clear_history = False
 
@@ -817,10 +838,12 @@ def main():
                     if admin_key == SUPER_ADMIN_KEY:
                         st.session_state.is_admin = True
                         st.session_state.is_super_admin = True
+                        st.session_state.collapse_sidebar_after_login = True
                         st.rerun()
                     elif current_store and admin_key == current_store.get('admin_key'):
                         st.session_state.is_admin = True
                         st.session_state.is_super_admin = False
+                        st.session_state.collapse_sidebar_after_login = True
                         st.rerun()
                     else:
                         st.error("❌ Password မှားနေပါတယ်။")
@@ -831,10 +854,12 @@ def main():
                 if admin_key == SUPER_ADMIN_KEY:
                     st.session_state.is_admin = True
                     st.session_state.is_super_admin = True
+                    st.session_state.collapse_sidebar_after_login = True
                     st.rerun()
                 elif current_store and admin_key == current_store.get('admin_key'):
                     st.session_state.is_admin = True
                     st.session_state.is_super_admin = False
+                    st.session_state.collapse_sidebar_after_login = True
                     st.rerun()
                 else:
                     st.sidebar.error("❌ Password မှားနေပါတယ်။")
@@ -843,6 +868,28 @@ def main():
             st.sidebar.success("👑 Super Admin Mode")
         else:
             st.sidebar.success("👨‍💼 Admin Mode")
+        
+        # Login ပြီးတာနဲ့ sidebar ကို auto collapse (Streamlit API မရှိလို့ JS သုံး)
+        if st.session_state.get('collapse_sidebar_after_login'):
+            st.session_state.collapse_sidebar_after_login = False
+            components.html("""
+            <script>
+            (function(){
+                setTimeout(function(){
+                    var doc = (typeof parent !== 'undefined' && parent.document) ? parent.document : document;
+                    var el = doc.querySelector('[data-testid="collapsedControl"]');
+                    if (!el) el = doc.querySelector('[data-testid="stSidebarCollapsedControl"]');
+                    if (!el) {
+                        var sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+                        if (sidebar) {
+                            var btn = sidebar.querySelector('button[aria-label]');
+                            if (btn) btn.click();
+                        }
+                    } else { el.click(); }
+                }, 150);
+            })();
+            </script>
+            """, height=0)
         
         # View Mode Toggle for Admin
         st.sidebar.divider()
@@ -872,25 +919,47 @@ def main():
                     new_store_id = st.text_input("Store ID *", placeholder="naypyidaw")
                     new_store_name = st.text_input("ဆိုင်အမည် *", placeholder="နေပြည်တော်")
                     new_admin_key = st.text_input("Admin Password *", placeholder="npt123")
-                    new_logo = st.text_input("Logo", value="☕")
+                    st.caption("🖼️ Logo: ကွန်ပျူတာက ပုံတင်မယ် (သို့) အောက်က စာလုံး/URL ထည့်မယ်")
+                    new_logo_file = st.file_uploader("Logo ပုံ တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="add_logo_upload")
+                    new_logo = st.text_input("Logo (က္ခရာ သို့ URL)", value="☕", placeholder="☕ သို့ https://...")
                     new_subtitle = st.text_input("Subtitle", value="Food & Drinks")
                     st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
                     new_bg_color = st.color_picker("Background Color", value="#ffffff")
-                    new_bg_image = st.text_input("Background Image URL", placeholder="https://example.com/bg.jpg")
+                    new_bg_file = st.file_uploader("Background ပုံ ကွန်ပျူတာက တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="add_bg_upload")
+                    new_bg_image = st.text_input("Background Image URL", placeholder="https://example.com/bg.jpg (သို့) ပုံတင်မယ်")
                     
                     if st.form_submit_button("➕ ဆိုင်ထည့်မည်", use_container_width=True):
                         if new_store_id and new_store_name and new_admin_key:
-                            save_store(db, {
-                                'store_id': new_store_id.strip().lower(),
-                                'store_name': new_store_name.strip(),
-                                'admin_key': new_admin_key.strip(),
-                                'logo': new_logo.strip() or '☕',
-                                'subtitle': new_subtitle.strip() or 'Food & Drinks',
-                                'bg_color': new_bg_color if new_bg_color != "#ffffff" else '',
-                                'bg_image': new_bg_image.strip()
-                            })
-                            st.success(f"✅ '{new_store_name}' ထည့်ပြီးပါပြီ။")
-                            st.rerun()
+                            logo_final = new_logo.strip() or "☕"
+                            logo_ok = True
+                            if new_logo_file:
+                                data_url_logo = _uploaded_image_to_data_url(new_logo_file, max_kb=200)
+                                if data_url_logo:
+                                    logo_final = data_url_logo
+                                else:
+                                    st.error("⚠️ Logo ပုံ ၂၀၀KB ထက် မကြီးပါစေနဲ့။")
+                                    logo_ok = False
+                            bg_final = new_bg_image.strip()
+                            bg_ok = True
+                            if new_bg_file:
+                                data_url_bg = _uploaded_image_to_data_url(new_bg_file, max_kb=450)
+                                if data_url_bg:
+                                    bg_final = data_url_bg
+                                else:
+                                    st.error("⚠️ Background ပုံ ၄၅၀KB ထက် မကြီးပါစေနဲ့။")
+                                    bg_ok = False
+                            if logo_ok and bg_ok:
+                                save_store(db, {
+                                    'store_id': new_store_id.strip().lower(),
+                                    'store_name': new_store_name.strip(),
+                                    'admin_key': new_admin_key.strip(),
+                                    'logo': logo_final,
+                                    'subtitle': new_subtitle.strip() or 'Food & Drinks',
+                                    'bg_color': new_bg_color if new_bg_color != "#ffffff" else '',
+                                    'bg_image': bg_final
+                                })
+                                st.success(f"✅ '{new_store_name}' ထည့်ပြီးပါပြီ။")
+                                st.rerun()
                         else:
                             st.error("⚠️ လိုအပ်တဲ့အချက်များ ဖြည့်ပါ။")
             
@@ -1021,26 +1090,51 @@ def main():
                     with st.form("edit_store_form"):
                         edit_store_name = st.text_input("ဆိုင်အမည်", value=current_store['store_name'])
                         edit_admin_key = st.text_input("Admin Password", value=current_store.get('admin_key', ''))
-                        edit_logo = st.text_input("Logo", value=current_store.get('logo', '☕'))
+                        cur_logo = current_store.get('logo', '☕')
+                        edit_logo_placeholder = cur_logo if not _is_image_url(cur_logo) else "လက်ရှိ ပုံသုံးထား"
+                        st.caption("🖼️ Logo: ကွန်ပျူတာက ပုံတင်မယ် (သို့) အောက်က စာလုံး/URL")
+                        edit_logo_file = st.file_uploader("Logo ပုံ အသစ်တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="edit_logo_upload")
+                        edit_logo = st.text_input("Logo (က္ခရာ သို့ URL)", value=cur_logo if not _is_image_url(cur_logo) else "", placeholder=edit_logo_placeholder)
                         edit_subtitle = st.text_input("Subtitle", value=current_store.get('subtitle', 'Food & Drinks'))
                         st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
                         edit_bg_color = st.color_picker("Background Color", value=current_store.get('bg_color', '#ffffff') or '#ffffff')
-                        edit_bg_image = st.text_input("Background Image URL", value=current_store.get('bg_image', ''), placeholder="https://example.com/image.jpg")
+                        cur_bg = current_store.get('bg_image', '')
+                        edit_bg_file = st.file_uploader("Background ပုံ ကွန်ပျူတာက တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="edit_bg_upload")
+                        edit_bg_image = st.text_input("Background Image URL", value="" if _is_image_url(cur_bg) else cur_bg, placeholder="https://... (သို့) ပုံတင်မယ်")
                         edit_bg_counter = st.checkbox("Counter Dashboard မှာလည်း Background ပြောင်းမယ်", value=current_store.get('bg_counter', False))
                         st.caption("💡 Image ထည့်ရင် Color ထက် Image ကို ဦးစားပေးမယ်")
                         
                         if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
-                            update_store(db, current_store['store_id'], {
-                                'store_name': edit_store_name.strip(),
-                                'admin_key': edit_admin_key.strip(),
-                                'logo': edit_logo.strip() or '☕',
-                                'subtitle': edit_subtitle.strip() or 'Food & Drinks',
-                                'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
-                                'bg_image': edit_bg_image.strip(),
-                                'bg_counter': edit_bg_counter
-                            })
-                            st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
-                            st.rerun()
+                            logo_final = edit_logo.strip() or cur_logo or "☕"
+                            logo_ok = True
+                            if edit_logo_file:
+                                data_url_logo = _uploaded_image_to_data_url(edit_logo_file, max_kb=200)
+                                if data_url_logo:
+                                    logo_final = data_url_logo
+                                else:
+                                    st.error("⚠️ Logo ပုံ ၂၀၀KB ထက် မကြီးပါစေနဲ့။")
+                                    logo_ok = False
+                            bg_final = edit_bg_image.strip() or cur_bg
+                            bg_ok = True
+                            if edit_bg_file:
+                                data_url_bg = _uploaded_image_to_data_url(edit_bg_file, max_kb=450)
+                                if data_url_bg:
+                                    bg_final = data_url_bg
+                                else:
+                                    st.error("⚠️ Background ပုံ ၄၅၀KB ထက် မကြီးပါစေနဲ့။")
+                                    bg_ok = False
+                            if logo_ok and bg_ok:
+                                update_store(db, current_store['store_id'], {
+                                    'store_name': edit_store_name.strip(),
+                                    'admin_key': edit_admin_key.strip(),
+                                    'logo': logo_final,
+                                    'subtitle': edit_subtitle.strip() or 'Food & Drinks',
+                                    'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
+                                    'bg_image': bg_final,
+                                    'bg_counter': edit_bg_counter
+                                })
+                                st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
+                                st.rerun()
                     
                     st.divider()
                     st.markdown("**⚠️ ဆိုင်ဖျက်ရန်:**")
@@ -1390,7 +1484,7 @@ def main():
         """, unsafe_allow_html=True)
     
     logo_value = current_store.get('logo', '☕')
-    is_image = isinstance(logo_value, str) and logo_value.startswith(('http://', 'https://'))
+    is_image = _is_image_url(logo_value)
     
     if is_image:
         logo_html = f'<img src="{html.escape(logo_value)}" style="width:150px; height:150px; object-fit:contain; border-radius:10px;" alt="Logo">'
