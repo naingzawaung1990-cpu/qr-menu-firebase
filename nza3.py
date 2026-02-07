@@ -157,6 +157,10 @@ def update_store(db, store_id, new_data):
     }
     if 'active' in new_data:
         upd['active'] = new_data['active']
+    for key in ('header_title_font_style', 'header_title_font_size', 'header_title_color',
+                'header_subtitle_font_style', 'header_subtitle_font_size', 'header_subtitle_color'):
+        if key in new_data:
+            upd[key] = new_data[key]
     db.collection('stores').document(store_id).update(upd)
     clear_all_cache()
 
@@ -247,6 +251,57 @@ def get_order_status(db, store_id, order_id):
     if doc.exists:
         return doc.to_dict().get('status')
     return None
+
+def get_order_doc(db, store_id, order_id):
+    """Get full order document for customer (status + unavailable_items message)"""
+    doc = db.collection('stores').document(store_id).collection('orders').document(order_id).get()
+    if doc.exists:
+        return doc.to_dict()
+    return None
+
+def update_order_unavailable(db, store_id, order_id, unavailable_items_str, adjusted_total=None):
+    """Save admin's 'ကုန်သွားသော ပစ္စည်းများ' and optional adjusted_total for customer."""
+    upd = {'unavailable_items': (unavailable_items_str or '').strip()}
+    if adjusted_total is not None:
+        upd['adjusted_total'] = str(int(adjusted_total))
+    db.collection('stores').document(store_id).collection('orders').document(order_id).update(upd)
+    load_orders.clear()
+
+def parse_order_items(items_str):
+    """Parse order items string 'A x1 | B x2' into list of (display_text, item_name, qty)."""
+    if not (items_str or '').strip():
+        return []
+    out = []
+    for part in (items_str or '').split('|'):
+        part = part.strip()
+        if not part:
+            continue
+        # "ပန်းပွင့်စိမ်းကြော် x1" -> name, qty
+        if ' x' in part and part.rstrip()[-1].isdigit():
+            name = part.rsplit(' x', 1)[0].strip()
+            try:
+                qty = int(''.join(c for c in part.rsplit(' x', 1)[1].strip() if c.isdigit()) or '1')
+            except:
+                qty = 1
+        else:
+            name = part
+            qty = 1
+        out.append((part, name, qty))
+    return out
+
+def compute_adjusted_total(order_total_int, menu_items, unavailable_item_names_with_qty):
+    """unavailable_item_names_with_qty = [(item_name, qty), ...]. Returns (adjusted_total, subtracted)."""
+    name_to_price = {}
+    for m in (menu_items or []):
+        nm = (m.get('name') or '').strip()
+        if nm:
+            name_to_price[nm] = parse_price(m.get('price', 0))
+    subtract = 0
+    for item_name, qty in (unavailable_item_names_with_qty or []):
+        p = name_to_price.get((item_name or '').strip(), 0)
+        subtract += p * qty
+    adjusted = max(0, order_total_int - subtract)
+    return adjusted, subtract
 
 def delete_order(db, store_id, order_id):
     """Delete completed order"""
@@ -392,106 +447,6 @@ def parse_price(price_str):
         return int(''.join(filter(str.isdigit, result)))
     except:
         return 0
-
-
-def build_offline_menu_data_url(store, categories, items):
-    """
-    Build a data URL containing full menu HTML so customer can view menu offline when scanning QR.
-    Returns (data_url_string, byte_length) - if byte_length too large, QR may be dense.
-    """
-    store_name = html.escape(store.get('store_name', 'Menu'))
-    subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
-    logo = store.get('logo', '☕')
-    if _is_image_url(logo):
-        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;background:transparent;" alt="">'
-    else:
-        logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
-
-    cat_names = [c.get('category_name', '') for c in categories]
-    cat_items = {cat: [] for cat in cat_names}
-    for item in items:
-        cat = item.get('category', '')
-        if cat in cat_items:
-            cat_items[cat].append(item)
-
-    lines = []
-    for cat in cat_names:
-        if not cat_items.get(cat):
-            continue
-        lines.append(f'<div style="background:#8B4513;color:#fff;text-align:center;padding:8px;border-radius:10px;margin:12px 0 8px 0;font-weight:600;">{html.escape(cat)}</div>')
-        for it in cat_items[cat]:
-            name = html.escape(it.get('name', ''))
-            price = html.escape(str(it.get('price', '')))
-            lines.append(f'<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;"><span>{name}</span><span style="color:#1E90FF;font-weight:600;">{price} Ks</span></div>')
-
-    body_content = ''.join(lines)
-    html_doc = (
-        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<style>body{font-family:sans-serif;margin:12px;background:#fff;color:#222;font-size:16px}'
-        'h1{margin:0 0 4px 0;font-size:1.3em;color:#2E86AB}.sub{margin:0 0 12px 0;font-size:0.95em;color:#666}</style></head><body>'
-        f'<div style="text-align:center;margin-bottom:12px;">{logo_html}</div>'
-        f'<h1 style="text-align:center;">{store_name}</h1>'
-        f'<p class="sub" style="text-align:center;">{subtitle}</p>'
-        f'{body_content}'
-        '</body></html>'
-    )
-    b64 = base64.b64encode(html_doc.encode('utf-8')).decode('ascii')
-    data_url = 'data:text/html;base64,' + b64
-    return data_url, len(data_url)
-
-
-# QR code version 40 supports max ~2953 bytes. Stay under 2900 to be safe.
-MAX_QR_DATA_LEN = 2900
-
-
-def _make_qr_image_bytes(data_url):
-    """Generate QR code image bytes from data URL. Raises if data too large for QR version 40."""
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=8,
-        border=2,
-    )
-    qr.add_data(data_url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf.getvalue()
-
-
-def build_offline_menu_data_url_per_category(store, category_name, items):
-    """Build one data URL for a single category (for splitting when full menu is too large)."""
-    store_name = html.escape(store.get('store_name', 'Menu'))
-    subtitle = html.escape(store.get('subtitle', 'Food & Drinks'))
-    logo = store.get('logo', '☕')
-    if _is_image_url(logo):
-        logo_html = f'<img src="{html.escape(logo)}" style="width:80px;height:80px;object-fit:contain;border-radius:8px;background:transparent;" alt="">'
-    else:
-        logo_html = f'<span style="font-size:3em;">{html.escape(logo)}</span>'
-    lines = [
-        f'<div style="background:#8B4513;color:#fff;text-align:center;padding:8px;border-radius:10px;margin:12px 0 8px 0;font-weight:600;">{html.escape(category_name)}</div>'
-    ]
-    for it in items:
-        name = html.escape(it.get('name', ''))
-        price = html.escape(str(it.get('price', '')))
-        lines.append(f'<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;"><span>{name}</span><span style="color:#1E90FF;font-weight:600;">{price} Ks</span></div>')
-    body_content = ''.join(lines)
-    html_doc = (
-        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<style>body{font-family:sans-serif;margin:12px;background:#fff;color:#222;font-size:16px}'
-        'h1{margin:0 0 4px 0;font-size:1.3em;color:#2E86AB}.sub{margin:0 0 12px 0;font-size:0.95em;color:#666}</style></head><body>'
-        f'<div style="text-align:center;margin-bottom:12px;">{logo_html}</div>'
-        f'<h1 style="text-align:center;">{store_name}</h1>'
-        f'<p class="sub" style="text-align:center;">{subtitle} — {html.escape(category_name)}</p>'
-        f'{body_content}'
-        '</body></html>'
-    )
-    b64 = base64.b64encode(html_doc.encode('utf-8')).decode('ascii')
-    return 'data:text/html;base64,' + b64
 
 
 def format_price(price):
@@ -998,173 +953,61 @@ def main():
                     new_store_id = st.text_input("Store ID *", placeholder="naypyidaw")
                     new_store_name = st.text_input("ဆိုင်အမည် *", placeholder="နေပြည်တော်")
                     new_admin_key = st.text_input("Admin Password *", placeholder="npt123")
-                    st.caption("🖼️ Logo: ကွန်ပျူတာက ပုံတင်မယ် (သို့) အောက်က စာလုံး/URL ထည့်မယ်")
-                    new_logo_file = st.file_uploader("Logo ပုံ တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="add_logo_upload")
-                    new_logo = st.text_input("Logo (က္ခရာ သို့ URL)", value="☕", placeholder="☕ သို့ https://...")
                     new_subtitle = st.text_input("Subtitle", value="Food & Drinks")
-                    st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
                     new_bg_color = st.color_picker("Background Color", value="#ffffff")
-                    new_no_bg_image = st.checkbox("Background ပုံ မသုံးပါ (No background image)", value=True, help="အမှတ်သွားရင် အရောင်ပဲ သုံးမယ်")
-                    new_bg_file = st.file_uploader("Background ပုံ ကွန်ပျူတာက တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="add_bg_upload")
-                    new_bg_image = st.text_input("Background Image URL", placeholder="https://example.com/bg.jpg (သို့) ပုံတင်မယ်")
                     new_active = st.checkbox("ဆိုင်ဖွင့်မည် (Active)", value=True, help="ပိတ်ထားရင် ဆိုင်က စာရင်းမှာ ပိတ်ထားသလို ပြမယ်")
-                    
                     if st.form_submit_button("➕ ဆိုင်ထည့်မည်", use_container_width=True):
                         if new_store_id and new_store_name and new_admin_key:
-                            logo_final = new_logo.strip() or "☕"
-                            logo_ok = True
-                            if new_logo_file:
-                                data_url_logo = _uploaded_image_to_data_url(new_logo_file, max_kb=200)
-                                if data_url_logo:
-                                    logo_final = data_url_logo
-                                else:
-                                    st.error("⚠️ Logo ပုံ ၂၀၀KB ထက် မကြီးပါစေနဲ့။")
-                                    logo_ok = False
-                            bg_ok = True
-                            if new_no_bg_image:
-                                bg_final = ""
-                            else:
-                                bg_final = new_bg_image.strip()
-                                if new_bg_file:
-                                    data_url_bg = _uploaded_image_to_data_url(new_bg_file, max_kb=450)
-                                    if data_url_bg:
-                                        bg_final = data_url_bg
-                                    else:
-                                        st.error("⚠️ Background ပုံ ၄၅၀KB ထက် မကြီးပါစေနဲ့။")
-                                        bg_ok = False
-                            if logo_ok and bg_ok:
-                                save_store(db, {
-                                    'store_id': new_store_id.strip().lower(),
-                                    'store_name': new_store_name.strip(),
-                                    'admin_key': new_admin_key.strip(),
-                                    'logo': logo_final,
-                                    'subtitle': new_subtitle.strip() or 'Food & Drinks',
-                                    'bg_color': new_bg_color if new_bg_color != "#ffffff" else '',
-                                    'bg_image': bg_final,
-                                    'active': new_active
-                                })
-                                st.success(f"✅ '{new_store_name}' ထည့်ပြီးပါပြီ။")
-                                st.rerun()
+                            save_store(db, {
+                                'store_id': new_store_id.strip().lower(),
+                                'store_name': new_store_name.strip(),
+                                'admin_key': new_admin_key.strip(),
+                                'logo': '☕',
+                                'subtitle': new_subtitle.strip() or 'Food & Drinks',
+                                'bg_color': new_bg_color if new_bg_color != "#ffffff" else '',
+                                'bg_image': '',
+                                'active': new_active
+                            })
+                            st.success(f"✅ '{new_store_name}' ထည့်ပြီးပါပြီ။")
+                            st.rerun()
                         else:
                             st.error("⚠️ လိုအပ်တဲ့အချက်များ ဖြည့်ပါ။")
             
             if current_store:
                 with st.sidebar.expander("📱 QR Code ထုတ်ရန်", expanded=False):
-                    qr_mode = st.radio(
-                        "QR အမျိုးအစား",
-                        ["📴 Offline Menu QR (လိုင်းမလိုပဲ menu ကြည့်ရန်)", "🌐 Online QR (မှာယူရန် - လိုင်းလိုသည်)"],
-                        index=0,
-                        help="Offline QR ဖတ်ရင် menu ချက်ချင်းပေါ်မယ်။ Online QR က app ဖွင့်ပြီး မှာယူလို့ရမယ်။"
+                    # Online QR only (offline QR ဖြုတ်ပြီး)
+                    base_url = st.text_input(
+                        "App URL",
+                        value="https://qr-menu-firebase-cex4wc3ghyukqngnhhr7r2.streamlit.app",
+                        help="Streamlit Cloud URL ထည့်ပါ"
                     )
-                    use_offline_qr = "Offline" in qr_mode
-
-                    if use_offline_qr:
-                        # Offline: QR contains full menu HTML (data URL) - customer လိုင်းမဖွင့်ပဲ ဖတ်လို့ရမယ်
-                        categories_for_qr = load_categories(db_id, current_store['store_id'])
-                        items_for_qr = load_menu_items(db_id, current_store['store_id'])
-                        data_url, data_len = build_offline_menu_data_url(current_store, categories_for_qr, items_for_qr)
-                        if data_len > MAX_QR_DATA_LEN:
-                            st.error(f"⚠️ Menu ရှည်လွန်းပါတယ် ({data_len} လုံး)။ QR တစ်ခုတည်းနဲ့ မထုတ်နိုင်ပါ။ အောက်က 'မျိုးကွဲအလိုက် QR ထုတ်မည်' သုံးပါ။")
-                        else:
-                            if data_len > 2500:
-                                st.warning(f"⚠️ Menu အနည်းငယ်ရှည်ပါတယ် ({data_len} လုံး)။")
-                        st.caption("ဒီ QR ကို Customer ဖတ်ရင် လိုင်းမဖွင့်ပဲ menu ကြည့်လို့ရပါတယ်။")
-                        if st.button("🔲 Offline QR ထုတ်မည် (menu တစ်ခုလုံး)", use_container_width=True):
-                            if data_len > MAX_QR_DATA_LEN:
-                                st.error("Menu ရှည်လွန်းလို့ QR တစ်ခုတည်း မထုတ်နိုင်ပါ။ မျိုးကွဲအလိုက် ထုတ်မည် ကို သုံးပါ။")
-                            else:
-                                qr = qrcode.QRCode(
-                                    version=1,
-                                    error_correction=qrcode.constants.ERROR_CORRECT_L,
-                                    box_size=8,
-                                    border=2,
-                                )
-                                qr.add_data(data_url)
-                                qr.make(fit=True)
-                                qr_img = qr.make_image(fill_color="black", back_color="white")
-                                buf = BytesIO()
-                                qr_img.save(buf, format="PNG")
-                                buf.seek(0)
-                                st.image(buf, caption=f"Offline QR: {current_store['store_name']}")
-                                st.download_button(
-                                    label="📥 Download Offline QR",
-                                    data=buf.getvalue(),
-                                    file_name=f"qr_offline_{current_store['store_id']}_menu.png",
-                                    mime="image/png",
-                                    use_container_width=True
-                                )
-                        st.caption("မျိုးကွဲများလွန်းရင် အောက်က မျိုးကွဲအလိုက် QR ထုတ်ပါ။")
-                        if st.button("📑 မျိုးကွဲအလိုက် Offline QR များ ထုတ်မည်", use_container_width=True):
-                            cat_names = [c.get('category_name', '') for c in categories_for_qr]
-                            cat_items = {cat: [] for cat in cat_names}
-                            for it in items_for_qr:
-                                c = it.get('category', '')
-                                if c in cat_items:
-                                    cat_items[c].append(it)
-                            per_category = [(cat, cat_items[cat]) for cat in cat_names if cat_items.get(cat)]
-                            if not per_category:
-                                st.warning("ပစ္စည်းမရှိသေးပါ။")
-                            else:
-                                idx = 0
-                                for cat_name, cat_item_list in per_category:
-                                    data_url_cat = build_offline_menu_data_url_per_category(current_store, cat_name, cat_item_list)
-                                    if len(data_url_cat) > MAX_QR_DATA_LEN:
-                                        chunk_size = 10
-                                        for i in range(0, len(cat_item_list), chunk_size):
-                                            chunk = cat_item_list[i:i + chunk_size]
-                                            part_label = f"{cat_name} ({i//chunk_size + 1})" if len(cat_item_list) > chunk_size else cat_name
-                                            data_url_part = build_offline_menu_data_url_per_category(current_store, part_label, chunk)
-                                            try:
-                                                png_bytes = _make_qr_image_bytes(data_url_part)
-                                                st.image(png_bytes, caption=f"Offline QR: {part_label}")
-                                                safe_name = "".join(c if c.isalnum() or c in " ()" else "_" for c in part_label).strip()[:50]
-                                                st.download_button(f"📥 Download {part_label}", data=png_bytes, file_name=f"qr_offline_{current_store['store_id']}_{safe_name}.png", mime="image/png", use_container_width=True, key=f"offline_qr_dl_{current_store['store_id']}_{idx}")
-                                            except ValueError:
-                                                st.warning(f"'{part_label}' အတွက် data ရှည်လွန်းပါသေးတယ်။")
-                                            idx += 1
-                                    else:
-                                        try:
-                                            png_bytes = _make_qr_image_bytes(data_url_cat)
-                                            st.image(png_bytes, caption=f"Offline QR: {cat_name}")
-                                            safe_name = "".join(c if c.isalnum() or c in " ()" else "_" for c in cat_name).strip()[:50]
-                                            st.download_button(f"📥 Download {cat_name}", data=png_bytes, file_name=f"qr_offline_{current_store['store_id']}_{safe_name}.png", mime="image/png", use_container_width=True, key=f"offline_qr_dl_{current_store['store_id']}_{idx}")
-                                        except ValueError:
-                                            st.warning(f"'{cat_name}' အတွက် data ရှည်လွန်းပါသေးတယ်။")
-                                        idx += 1
+                    qr_table = st.text_input("စားပွဲနံပါတ် (optional)", placeholder="5")
+                    if qr_table:
+                        qr_url = f"{base_url}/?store={current_store['store_id']}&table={qr_table}&embed=true"
                     else:
-                        # Online: QR = URL to Streamlit app (မှာယူရန်)
-                        base_url = st.text_input(
-                            "App URL",
-                            value="https://qr-menu-firebase-cex4wc3ghyukqngnhhr7r2.streamlit.app",
-                            help="Streamlit Cloud URL ထည့်ပါ"
+                        qr_url = f"{base_url}/?store={current_store['store_id']}&embed=true"
+                    st.code(qr_url, language=None)
+                    if st.button("🔲 Online QR ထုတ်မည်", use_container_width=True):
+                        qr = qrcode.QRCode(
+                            version=1,
+                            error_correction=qrcode.constants.ERROR_CORRECT_L,
+                            box_size=10,
+                            border=4,
                         )
-                        qr_table = st.text_input("စားပွဲနံပါတ် (optional)", placeholder="5")
-                        if qr_table:
-                            qr_url = f"{base_url}/?store={current_store['store_id']}&table={qr_table}&embed=true"
-                        else:
-                            qr_url = f"{base_url}/?store={current_store['store_id']}&embed=true"
-                        st.code(qr_url, language=None)
-                        if st.button("🔲 Online QR ထုတ်မည်", use_container_width=True):
-                            qr = qrcode.QRCode(
-                                version=1,
-                                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                                box_size=10,
-                                border=4,
-                            )
-                            qr.add_data(qr_url)
-                            qr.make(fit=True)
-                            qr_img = qr.make_image(fill_color="black", back_color="white")
-                            buf = BytesIO()
-                            qr_img.save(buf, format="PNG")
-                            buf.seek(0)
-                            st.image(buf, caption=f"Online QR: {current_store['store_name']}")
-                            st.download_button(
-                                label="📥 Download Online QR",
-                                data=buf.getvalue(),
-                                file_name=f"qr_online_{current_store['store_id']}_{qr_table or 'menu'}.png",
-                                mime="image/png",
-                                use_container_width=True
-                            )
+                        qr.add_data(qr_url)
+                        qr.make(fit=True)
+                        qr_img = qr.make_image(fill_color="black", back_color="white")
+                        buf = BytesIO()
+                        qr_img.save(buf, format="PNG")
+                        buf.seek(0)
+                        st.image(buf, caption=f"Online QR: {current_store['store_name']}")
+                        st.download_button(
+                            label="📥 Download Online QR",
+                            data=buf.getvalue(),
+                            file_name=f"qr_online_{current_store['store_id']}_{qr_table or 'menu'}.png",
+                            mime="image/png",
+                            use_container_width=True
+                        )
                 
                 with st.sidebar.expander("⚙️ ဆိုင်ပြင်ဆင်ရန်", expanded=False):
                     st.markdown("**Store ID:**")
@@ -1175,57 +1018,77 @@ def main():
                     with st.form("edit_store_form"):
                         edit_store_name = st.text_input("ဆိုင်အမည်", value=current_store['store_name'])
                         edit_admin_key = st.text_input("Admin Password", value=current_store.get('admin_key', ''))
-                        cur_logo = current_store.get('logo', '☕')
-                        edit_logo_placeholder = cur_logo if not _is_image_url(cur_logo) else "လက်ရှိ ပုံသုံးထား"
-                        st.caption("🖼️ Logo: ကွန်ပျူတာက ပုံတင်မယ် (သို့) အောက်က စာလုံး/URL")
-                        edit_logo_file = st.file_uploader("Logo ပုံ အသစ်တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="edit_logo_upload")
-                        edit_logo = st.text_input("Logo (က္ခရာ သို့ URL)", value=cur_logo if not _is_image_url(cur_logo) else "", placeholder=edit_logo_placeholder)
                         edit_subtitle = st.text_input("Subtitle", value=current_store.get('subtitle', 'Food & Drinks'))
-                        st.caption("🎨 Background ရွေးပါ (တစ်ခုခုသာ):")
                         edit_bg_color = st.color_picker("Background Color", value=current_store.get('bg_color', '#ffffff') or '#ffffff')
-                        edit_no_bg_image = st.checkbox("Background ပုံ မသုံးပါ (No background image)", value=not bool(current_store.get('bg_image', '').strip()), help="အမှတ်သွားရင် ပုံဖယ်ပြီး အရောင်ပဲ သုံးမယ်")
-                        cur_bg = current_store.get('bg_image', '')
-                        edit_bg_file = st.file_uploader("Background ပုံ ကွန်ပျူတာက တင်မည်", type=["png", "jpg", "jpeg", "gif", "webp"], key="edit_bg_upload")
-                        edit_bg_image = st.text_input("Background Image URL", value="" if _is_image_url(cur_bg) else cur_bg, placeholder="https://... (သို့) ပုံတင်မယ်")
                         edit_bg_counter = st.checkbox("Counter Dashboard မှာလည်း Background ပြောင်းမယ်", value=current_store.get('bg_counter', False))
                         edit_active = st.checkbox("ဆိုင်ဖွင့်မည် (Active)", value=current_store.get('active', True), help="ပိတ်ထားရင် ဆိုင်က စာရင်းမှာ ပိတ်ထားသလို ပြမယ်")
-                        st.caption("💡 Image ထည့်ရင် Color ထက် Image ကို ဦးစားပေးမယ်")
-                        
+                        edit_header_payload = {}
+                        if st.session_state.get('is_super_admin'):
+                            st.divider()
+                            st.markdown("**ခေါင်းစဉ် ၂ ခု ပြင်ဆင်ရန် (Font / Size / Color)**")
+                            _font_opts = [
+                                ("Default (sans-serif)", "sans-serif"),
+                                ("Serif", "serif"),
+                                ("Monospace", "monospace"),
+                                ("Cursive", "cursive"),
+                                ("Arial", "Arial, sans-serif"),
+                                ("Helvetica", "Helvetica, sans-serif"),
+                                ("Times New Roman", "Times New Roman, serif"),
+                                ("Georgia", "Georgia, serif"),
+                                ("Verdana", "Verdana, sans-serif"),
+                                ("Tahoma", "Tahoma, sans-serif"),
+                                ("Trebuchet MS", "Trebuchet MS, sans-serif"),
+                                ("Courier New", "Courier New, monospace"),
+                                ("Comic Sans MS", "Comic Sans MS, cursive"),
+                                ("Impact", "Impact, sans-serif"),
+                                ("Lucida Sans", "Lucida Sans Unicode, sans-serif"),
+                                ("Palatino", "Palatino Linotype, serif"),
+                                ("Garamond", "Garamond, serif"),
+                                ("— မြန်မာ Font —", "sans-serif"),
+                                ("Myanmar3", "Myanmar3, sans-serif"),
+                                ("Padauk", "Padauk, sans-serif"),
+                                ("Noto Sans Myanmar", "Noto Sans Myanmar, sans-serif"),
+                                ("TharLon", "TharLon, sans-serif"),
+                                ("Pyidaungsu", "Pyidaungsu, sans-serif"),
+                                ("Masterpiece Uni Sans", "Masterpiece Uni Sans, sans-serif"),
+                                ("Yunghkio", "Yunghkio, sans-serif"),
+                                ("Myanmar Text", "Myanmar Text, sans-serif"),
+                            ]
+                            _font_labels = [x[0] for x in _font_opts]
+                            _font_vals = [x[1] for x in _font_opts]
+                            st.markdown("*ဆိုင်အမည် (ခေါင်းစဉ်)*")
+                            _tit_style = current_store.get('header_title_font_style') or 'sans-serif'
+                            edit_title_font_style = st.selectbox("Font style", _font_labels, index=_font_vals.index(_tit_style) if _tit_style in _font_vals else 0, key="tit_font_style")
+                            edit_title_font_size = st.text_input("Font size", value=current_store.get('header_title_font_size') or '3em', placeholder="3em or 48px", key="tit_font_size")
+                            edit_title_color = st.color_picker("Color", value=current_store.get('header_title_color') or COLORS["header_title"], key="tit_color")
+                            st.markdown("*Subtitle*")
+                            _sub_style = current_store.get('header_subtitle_font_style') or 'sans-serif'
+                            edit_subtitle_font_style = st.selectbox("Font style", _font_labels, index=_font_vals.index(_sub_style) if _sub_style in _font_vals else 0, key="sub_font_style")
+                            edit_subtitle_font_size = st.text_input("Font size", value=current_store.get('header_subtitle_font_size') or '1.5em', placeholder="1.5em or 24px", key="sub_font_size")
+                            edit_subtitle_color = st.color_picker("Color", value=current_store.get('header_subtitle_color') or COLORS["header_subtitle"], key="sub_color")
+                            edit_header_payload = {
+                                'header_title_font_style': _font_vals[_font_labels.index(edit_title_font_style)],
+                                'header_title_font_size': (edit_title_font_size or '3em').strip(),
+                                'header_title_color': edit_title_color,
+                                'header_subtitle_font_style': _font_vals[_font_labels.index(edit_subtitle_font_style)],
+                                'header_subtitle_font_size': (edit_subtitle_font_size or '1.5em').strip(),
+                                'header_subtitle_color': edit_subtitle_color,
+                            }
                         if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
-                            logo_final = edit_logo.strip() or cur_logo or "☕"
-                            logo_ok = True
-                            bg_ok = True
-                            if edit_logo_file:
-                                data_url_logo = _uploaded_image_to_data_url(edit_logo_file, max_kb=200)
-                                if data_url_logo:
-                                    logo_final = data_url_logo
-                                else:
-                                    st.error("⚠️ Logo ပုံ ၂၀၀KB ထက် မကြီးပါစေနဲ့။")
-                                    logo_ok = False
-                            if edit_no_bg_image:
-                                bg_final = ""
-                            else:
-                                bg_final = edit_bg_image.strip() or cur_bg
-                                if edit_bg_file:
-                                    data_url_bg = _uploaded_image_to_data_url(edit_bg_file, max_kb=450)
-                                    if data_url_bg:
-                                        bg_final = data_url_bg
-                                    else:
-                                        st.error("⚠️ Background ပုံ ၄၅၀KB ထက် မကြီးပါစေနဲ့။")
-                                        bg_ok = False
-                            if logo_ok and bg_ok:
-                                update_store(db, current_store['store_id'], {
-                                    'store_name': edit_store_name.strip(),
-                                    'admin_key': edit_admin_key.strip(),
-                                    'logo': logo_final,
-                                    'subtitle': edit_subtitle.strip() or 'Food & Drinks',
-                                    'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
-                                    'bg_image': bg_final.strip() if not edit_no_bg_image else '',
-                                    'bg_counter': edit_bg_counter,
-                                    'active': edit_active
-                                })
-                                st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
-                                st.rerun()
+                            payload = {
+                                'store_name': edit_store_name.strip(),
+                                'admin_key': edit_admin_key.strip(),
+                                'logo': current_store.get('logo', '☕'),
+                                'subtitle': edit_subtitle.strip() or 'Food & Drinks',
+                                'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
+                                'bg_image': current_store.get('bg_image', ''),
+                                'bg_counter': edit_bg_counter,
+                                'active': edit_active
+                            }
+                            payload.update(edit_header_payload)
+                            update_store(db, current_store['store_id'], payload)
+                            st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
+                            st.rerun()
                     
                     st.divider()
                     st.markdown("**⚠️ ဆိုင်ဖျက်ရန်:**")
@@ -1407,32 +1270,8 @@ def main():
             """, height=0)
         # Apply background if enabled for Counter Dashboard
         if current_store.get('bg_counter', False):
-            bg_image_url = current_store.get('bg_image', '')
             bg_color = current_store.get('bg_color', '')
-            
-            if bg_image_url:
-                st.markdown(f"""
-                <style>
-                .stApp {{
-                    background-image: url("{bg_image_url}");
-                    background-size: cover;
-                    background-position: center;
-                    background-repeat: no-repeat;
-                    background-attachment: fixed;
-                }}
-                .stApp::before {{
-                    content: "";
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    width: 100%;
-                    height: 100%;
-                    background: rgba(255, 255, 255, 0.85);
-                    z-index: -1;
-                }}
-                </style>
-                """, unsafe_allow_html=True)
-            elif bg_color:
+            if bg_color:
                 st.markdown(f"""
                 <style>
                 .stApp {{
@@ -1561,22 +1400,52 @@ def main():
                     col1, col2 = st.columns([3, 1])
                     
                     with col1:
+                        order_display_total = int(order.get('adjusted_total') or order['total'])
                         st.markdown(f"### {status_color} Order #{order['order_id']}")
                         st.markdown(f"**🪑 Table: {order['table_no']}**")
                         st.markdown(f"**📝 Items:** {order['items']}")
-                        st.markdown(f"**💰 Total:** {format_price(int(order['total']))} Ks")
+                        st.markdown(f"**💰 Total:** {format_price(order_display_total)} Ks" + (" _(မရနိုင်နုတ်ပြီး)_" if order.get('adjusted_total') else ""))
                         st.caption(f"🕐 {order['timestamp']}")
+                        # ကုန်သွားသော ပစ္စည်း ရွေးပါ — admin နှိပ်မှ ပွင့်မယ် (refresh မှာ မပွင့်ဘူး)
+                        unav_str = (order.get('unavailable_items') or '').strip()
+                        unav_set = set(n.strip() for n in unav_str.replace('၊', ',').split(',') if n.strip())
+                        parsed = parse_order_items(order.get('items', ''))
+                        menu_items = load_menu_items(0, store_id)
+                        with st.expander("🔴 ပစ္စည်း ရနိုင်/မရနိုင် ရွေးပါ (နှိပ်ပါ)", expanded=False):
+                            st.caption(f"Order #{order['order_id']} | 🪑 Table {order['table_no']}")
+                            checked = []
+                            for idx, row in enumerate(parsed):
+                                display_text = row[0]
+                                item_name = row[1]
+                                qty = row[2] if len(row) > 2 else 1
+                                is_unav = st.checkbox(
+                                    f"မရနိုင် — {display_text}",
+                                    value=(item_name in unav_set),
+                                    key=f"unav_{order['order_id']}_{idx}"
+                                )
+                                if is_unav:
+                                    checked.append((item_name, qty))
+                            st.caption("မရနိုင် အမှန်ခြစ်ထားပြီး **Preparing** နှိပ်လိုက်ရင် Customer ဆီ ကုန်သွားပါပြီ တောင်ပန်းပါတယ် ပို့မည်။ Total မှ နုတ်မည်။ (သတင်းသိမ်း မလိုပါ။)")
                     
                     with col2:
                         if order['status'] == 'pending':
                             if st.button("👨‍🍳 Preparing", key=f"prep_{order['order_id']}", use_container_width=True):
+                                # Preparing နှိပ်တဲ့အခါ လက်ရှိ မရနိုင် အမှန်ခြစ်ထားတာကို ယူပြီး order မှာ သိမ်း + status ပြောင်း (နောက် ၁ နာရီ/နောက်နေ့ စာရင်းမှ မပါ)
+                                unav_names = ", ".join(n for n, q in checked)
+                                try:
+                                    orig_total = int(order['total'])
+                                except:
+                                    orig_total = 0
+                                adjusted, _ = compute_adjusted_total(orig_total, menu_items, checked)
+                                update_order_unavailable(db, store_id, order['order_id'], unav_names, adjusted)
                                 update_order_status(db, store_id, order['order_id'], 'preparing')
+                                st.toast("Preparing ပြီး။ Customer ဆီ မရနိုင်သတင်း ပို့ပြီး Total နုတ်ပြီး။")
                                 st.rerun()
                         
                         if st.button("✅ Complete", key=f"done_{order['order_id']}", use_container_width=True, type="primary"):
-                            # Add to daily sales
+                            # Add to daily sales (use adjusted_total if customer had unavailable items)
                             try:
-                                order_total = int(order['total'])
+                                order_total = int(order.get('adjusted_total') or order['total'])
                                 add_to_daily_sales(db, store_id, order_total)
                             except:
                                 pass
@@ -1664,94 +1533,59 @@ def main():
     
     # Menu View
     
-    # Apply background (Image takes priority over Color) - စာမျက်နှာနဲ့ sidebar တစ်ရောင်တည်း
-    bg_image_url = current_store.get('bg_image', '')
-    bg_color = current_store.get('bg_color', '') or '#e8edd5'  # default: အောက်က အရောင် (light greenish-yellow)
+    # Apply background (အရောင်ပဲ — ပုံ မသုံးပါ)
+    bg_color = current_store.get('bg_color', '') or '#e8edd5'  # default: light greenish-yellow
+    st.markdown(f"""
+    <style>
+    .stApp {{
+        background-color: {bg_color} !important;
+        padding-top: 0 !important;
+    }}
+    [data-testid="stAppViewContainer"] {{
+        padding-top: 0.5rem !important;
+    }}
+    [data-testid="stSidebar"] > div:first-child {{
+        background-color: {bg_color} !important;
+    }}
+    header[data-testid="stHeader"], [data-testid="stHeader"], header {{
+        background-color: {bg_color} !important;
+    }}
+    .block-container {{
+        padding-top: 0.5rem !important;
+        max-width: 100%;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
     
-    if bg_image_url:
-        # Background Image with overlay
-        st.markdown(f"""
-        <style>
-        .stApp {{
-            background-image: url("{bg_image_url}");
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            background-attachment: fixed;
-        }}
-        .stApp::before {{
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(255, 255, 255, 0.85);
-            z-index: -1;
-        }}
-        [data-testid="stSidebar"] > div:first-child {{
-            background-color: {bg_color} !important;
-        }}
-        header[data-testid="stHeader"], [data-testid="stHeader"], header {{
-            background-color: {bg_color} !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
-    else:
-        # Background Color - စာမျက်နှာနဲ့ sidebar အောက်က အရောင်အတိုင်း
-        st.markdown(f"""
-        <style>
-        .stApp {{
-            background-color: {bg_color} !important;
-        }}
-        [data-testid="stSidebar"] > div:first-child {{
-            background-color: {bg_color} !important;
-        }}
-        /* Deploy အတန်း (header) ကိုလည်း အောက်က အရောင်အတိုင်း */
-        header[data-testid="stHeader"], [data-testid="stHeader"], header {{
-            background-color: {bg_color} !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
-    
-    logo_value = current_store.get('logo', '☕')
-    is_image = _is_image_url(logo_value)
-    
-    if is_image:
-        logo_html = f'<img src="{html.escape(logo_value)}" style="width:150px; height:150px; object-fit:contain; border-radius:10px; background:transparent;" alt="Logo">'
-    else:
-        logo_html = f'<span style="font-size:8em;">{logo_value}</span>'
-    
+    # ဆိုင်ပုံ/logoပြပါ — ဆိုင်အမည်နဲ့ subtitle ပဲ ပြ (Super Admin က ပြင်ထားတဲ့ font/size/color သုံး)
+    _tit_font = current_store.get('header_title_font_style') or 'sans-serif'
+    _tit_size = current_store.get('header_title_font_size') or '3em'
+    _tit_color = current_store.get('header_title_color') or COLORS["header_title"]
+    _sub_font = current_store.get('header_subtitle_font_style') or 'sans-serif'
+    _sub_size = current_store.get('header_subtitle_font_size') or '1.5em'
+    _sub_color = current_store.get('header_subtitle_color') or COLORS["header_subtitle"]
     st.markdown(f"""
     <style>
     .header-container {{
         text-align: center;
-        padding: 20px 0 10px 0;
-    }}
-    .header-logo {{
-        display: flex;
-        justify-content: center;
-        margin-bottom: 10px;
-        background: transparent;
-    }}
-    .header-logo img {{
-        background: transparent !important;
+        padding: 8px 0 10px 0;
     }}
     .header-title {{
-        font-size: 3em;
+        font-family: {_tit_font};
+        font-size: {_tit_size};
         font-weight: bold;
-        color: {COLORS["header_title"]};
+        color: {_tit_color};
         margin: 10px 0 5px 0;
     }}
     .header-subtitle {{
-        font-size: 1.5em;
+        font-family: {_sub_font};
+        font-size: {_sub_size};
         font-weight: bold;
-        color: {COLORS["header_subtitle"]};
+        color: {_sub_color};
         letter-spacing: 3px;
     }}
     </style>
     <div class="header-container">
-        <div class="header-logo">{logo_html}</div>
         <div class="header-title">{html.escape(current_store['store_name'])}</div>
         <div class="header-subtitle">{html.escape(current_store.get('subtitle', 'Food & Drinks'))}</div>
     </div>
@@ -1781,12 +1615,20 @@ def main():
         """, height=0)
         
         order_info = st.session_state.order_success
-        order_status = get_order_status(db, current_store['store_id'], order_info['order_id']) if current_store else None
+        order_doc = get_order_doc(db, current_store['store_id'], order_info['order_id']) if current_store else None
+        order_status = order_doc.get('status') if order_doc else None
+        unavailable_items = (order_doc.get('unavailable_items') or '').strip() if order_doc else ''
+        adjusted_total = order_doc.get('adjusted_total') if order_doc else None
+        display_total = int(adjusted_total) if adjusted_total is not None else order_info['total']
         
-        if order_status in ('pending', 'preparing'):
+        # Customer order status စစ်ဖို့ refresh — preparing ဆိုရင် ခဏခဏ မလုပ်အောင် interval ကြာပါမယ်
+        if order_status == 'pending':
             st_autorefresh(interval=5000, limit=None, key="customer_order_track")
+        elif order_status == 'preparing':
+            st_autorefresh(interval=20000, limit=None, key="customer_order_track")  # ၂၀ စက္ကန့် တစ်ခါ (အသံမထပ်အောင်)
         
-        # စိမ်းရောင် "Order ပို့ပြီးပါပြီ!" box - pending ပဲ ပြ။ preparing/completed ရောက်ရင် မပြ
+        # အနီရောင် noti ဖယ်ထား — မရနိုင်သတင်းက အဝါ box ထဲမှာပဲ ပြီးသား
+        # စိမ်းရောင် "Order ပို့ပြီးပါပြီ!" box - pending ပဲ ပြ။ preparing/completed ရောက်ရင် မပြ (စုစုပေါင်း = adjusted ရှိရင် ပြ)
         if order_status not in ('preparing', 'completed'):
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); 
@@ -1800,35 +1642,32 @@ def main():
                     Order #{order_info['order_id']}
                 </div>
                 <div style="color: #fff; font-size: 1em; opacity: 0.9; margin-top: 10px;">
-                    🪑 စားပွဲ: {order_info['table_no']} | 💰 {format_price(order_info['total'])} Ks
+                    🪑 စားပွဲ: {order_info['table_no']} | 💰 {format_price(display_total)} Ks
                 </div>
             </div>
             """, unsafe_allow_html=True)
         
-        # Show status to customer when admin updates (Preparing / Completed)
+        # Show status to customer when admin updates (Preparing / Completed) — အဝါရောင် box (အကုန်ရရင်/မရရင် နှစ်မျိုးလုံး မပျက်အောင်)
         if order_status == 'preparing':
-            st.markdown("""
-            <div style="background: linear-gradient(135deg, #f0ad4e 0%, #ec971f 100%); 
-                        padding: 18px; border-radius: 12px; text-align: center; margin: 15px 0;
-                        box-shadow: 0 3px 12px rgba(240, 173, 78, 0.4);">
-                <div style="font-size: 2em; margin-bottom: 5px;">👨‍🍳</div>
-                <div style="color: #fff; font-size: 1.3em; font-weight: bold;">
-                    သင့်အော်ဒါ ပြင်ဆင်နေပါပြီ!
-                </div>
-                <div style="color: #fff; font-size: 0.95em; opacity: 0.95; margin-top: 5px;">
-                    မကြာမီ ရောက်ပါမည်။
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            # ပြင်ဆင်နေပါပြီ noti အသံ - တစ်ကြိမ်ပဲ ထွက်အောင်
-            if st.session_state.get('preparing_sound_played') != order_info['order_id']:
-                st.session_state.preparing_sound_played = order_info['order_id']
-                components.html("""
+            table_amt = f'Table: {html.escape(str(order_info["table_no"]))} | Amount: {format_price(display_total)} Ks'
+            if unavailable_items:
+                unav_esc = html.escape(unavailable_items)
+                inner = f'<div style="color:#fff;font-size:1.3em;font-weight:bold;">သင့် order ပြင်ဆင်နေပါပြီး!</div><div style="color:#fff;font-size:1em;margin-top:8px;"><span style="color:#dc3545;font-weight:bold;">{unav_esc}</span> မရနိုင်လို့ တောင်းပန်ပါတယ်။</div><div style="color:#fff;font-size:1em;margin-top:8px;">{table_amt}</div><div style="color:#fff;font-size:0.95em;opacity:0.95;margin-top:8px;">မကြာမီ ရောက်လာပါမည်။</div>'
+            else:
+                inner = f'<div style="color:#fff;font-size:1.3em;font-weight:bold;">သင့် order ပြင်ဆင်နေပါပြီး!</div><div style="color:#fff;font-size:1em;margin-top:8px;">{table_amt}</div><div style="color:#fff;font-size:0.95em;opacity:0.95;margin-top:8px;">မကြာမီ ရောက်လာပါမည်။</div>'
+            box_html = '<div style="background:linear-gradient(135deg,#f0ad4e 0%,#ec971f 100%);padding:18px;border-radius:12px;text-align:center;margin:15px 0;box-shadow:0 3px 12px rgba(240,173,78,0.4);"><div style="font-size:2em;margin-bottom:5px;">👨‍🍳</div>' + inner + '</div>'
+            st.markdown(box_html, unsafe_allow_html=True)
+            # ပြင်ဆင်နေပါပြီ noti အသံ - တစ်ကြိမ်ပဲ (localStorage နဲ့ စစ်ပြီး refresh ဖြစ်လည်း မထပ်အောင်)
+            oid = order_info['order_id']
+            components.html(f"""
                 <script>
-                    (function(){
-                        const ac = new (window.AudioContext || window.webkitAudioContext)();
-                        function beep(freq, dur, delay) {
-                            setTimeout(function() {
+                    (function(){{
+                        var key = 'preparing_sound_' + {json.dumps(oid)};
+                        if (window.localStorage && localStorage.getItem(key)) return;
+                        if (window.localStorage) localStorage.setItem(key, '1');
+                        var ac = new (window.AudioContext || window.webkitAudioContext)();
+                        function beep(freq, dur, delay) {{
+                            setTimeout(function() {{
                                 var o = ac.createOscillator();
                                 var g = ac.createGain();
                                 o.connect(g); g.connect(ac.destination);
@@ -1838,14 +1677,14 @@ def main():
                                 g.gain.exponentialRampToValueAtTime(0.01, ac.currentTime + dur);
                                 o.start(ac.currentTime);
                                 o.stop(ac.currentTime + dur);
-                            }, delay);
-                        }
+                            }}, delay);
+                        }}
                         beep(587, 0.12, 0);
                         beep(784, 0.12, 120);
                         beep(988, 0.2, 240);
-                    })();
+                    }})();
                 </script>
-                """, height=0)
+            """, height=0)
         elif order_status == 'completed':
             st.markdown("""
             <div style="background: linear-gradient(135deg, #5bc0de 0%, #46b8da 100%); 
@@ -1903,9 +1742,8 @@ def main():
             st.session_state.last_order_id = None
         elif status == 'preparing':
             load_orders.clear()
-            st_autorefresh(interval=8000, limit=None, key="customer_preparing_refresh")
+            st_autorefresh(interval=20000, limit=None, key="customer_preparing_refresh")  # ၂၀ စက္ကန့် တစ်ခါ
         elif status == 'pending':
-            # Order still pending: poll so we see "preparing" when admin clicks
             load_orders.clear()
             st_autorefresh(interval=5000, limit=None, key="customer_preparing_refresh")
     
