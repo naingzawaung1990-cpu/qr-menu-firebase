@@ -1763,23 +1763,24 @@ def main():
     
     # Show order success alert (ပြင်ဆင်နေပါပြီ noti ရောက်ရင် ဒီ box ပျောက်မယ်)
     if st.session_state.order_success and not st.session_state.is_admin:
-        # မှာပြီးတာနဲ့ အပေါ်ကို လိမ့်စေ - noti ချက်ချင်းမြင်ရအောင်
+        # Noti တက်တာနဲ့ စာမျက်နှာ အပေါ်ဆုံး လိမ့်စေ — SMS/noti ချက်ချင်းမြင်ရအောင်
         components.html("""
         <script>
         (function(){
-            var scrollToTop = function(){
+            function scrollToTop() {
                 try { window.scrollTo(0, 0); } catch(e) {}
                 try { document.documentElement.scrollTop = 0; document.body.scrollTop = 0; } catch(e) {}
                 try {
                     var doc = (typeof parent !== 'undefined' && parent.document) ? parent.document : document;
-                    var root = doc.querySelector('[data-testid="stAppViewContainer"]') || doc.querySelector('.main');
-                    if (root) root.scrollTop = 0;
+                    var root = doc.querySelector('[data-testid="stAppViewContainer"]') || doc.querySelector('.main') || doc.querySelector('[class*="viewContainer"]');
+                    if (root) { root.scrollTop = 0; root.scrollTo(0, 0); }
+                    var scrollable = doc.querySelector('[data-testid="stAppViewContainer"]');
+                    if (scrollable && scrollable.parentElement) scrollable.parentElement.scrollTop = 0;
                     if (typeof parent !== 'undefined' && parent.window) parent.window.scrollTo(0, 0);
                 } catch(e) {}
-            };
+            }
             scrollToTop();
-            setTimeout(scrollToTop, 100);
-            setTimeout(scrollToTop, 400);
+            [100, 250, 500, 800, 1200].forEach(function(ms) { setTimeout(scrollToTop, ms); });
         })();
         </script>
         """, height=0)
@@ -2345,6 +2346,26 @@ def main():
         # ပို့ပြီးပြီဆိုရင် ဒီ run မှာပဲ success box ပြ (မပြန်တင်လို့ အသံပါ ထွက်မယ်)
         if st.session_state.order_success:
             oi = st.session_state.order_success
+            # Noti တက်တာနဲ့ အပေါ်ကို လိမ့်စေ
+            components.html("""
+            <script>
+            (function(){
+                function scrollToTop() {
+                    try { window.scrollTo(0, 0); } catch(e) {}
+                    try { document.documentElement.scrollTop = 0; document.body.scrollTop = 0; } catch(e) {}
+                    try {
+                        var doc = (typeof parent !== 'undefined' && parent.document) ? parent.document : document;
+                        var root = doc.querySelector('[data-testid="stAppViewContainer"]') || doc.querySelector('.main');
+                        if (root) { root.scrollTop = 0; }
+                        if (typeof parent !== 'undefined' && parent.window) parent.window.scrollTo(0, 0);
+                    } catch(e) {}
+                }
+                scrollToTop();
+                setTimeout(scrollToTop, 200);
+                setTimeout(scrollToTop, 600);
+            })();
+            </script>
+            """, height=0)
             # စာမျက်နှာ ပြန်တင်အောင် ထားရမယ် — နောက် run မှာ အပေါ်က block က Preparing/Complete ပြမယ်
             st_autorefresh(interval=6000, limit=None, key="customer_cart_order_track")
             st.markdown(f"""
@@ -2384,7 +2405,7 @@ def main():
     # Footer - only show for admin
     if st.session_state.is_admin:
         st.divider()
-        st.caption("📱 QR Menu & Order | ⚡ Powered by Firebase")
+        st.caption("📱 QR Menu & Order")
 
 if __name__ == "__main__":
     main()
