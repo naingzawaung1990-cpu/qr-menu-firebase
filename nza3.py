@@ -8,6 +8,12 @@ import uuid
 import qrcode
 from io import BytesIO
 
+try:
+    from PIL import Image
+    HAS_PIL = True
+except Exception:
+    HAS_PIL = False
+
 # Firebase imports
 import warnings
 warnings.filterwarnings("ignore", message=".*Prefer using the 'filter' keyword argument instead.*", module="google.cloud.firestore")
@@ -159,7 +165,8 @@ def update_store(db, store_id, new_data):
         upd['active'] = new_data['active']
     for key in ('header_title_font_style', 'header_title_font_size', 'header_title_color',
                 'header_subtitle_font_style', 'header_subtitle_font_size', 'header_subtitle_color',
-                'category_box_bg_start', 'category_box_bg_end', 'category_box_font_color'):
+                'category_box_bg_start', 'category_box_bg_end', 'category_box_font_color',
+                'table_number_format'):
         if key in new_data:
             upd[key] = new_data[key]
     db.collection('stores').document(store_id).update(upd)
@@ -508,6 +515,8 @@ if 'last_order_id' not in st.session_state:
     st.session_state.last_order_id = None  # For customer: show "preparing" noti when admin marks order
 if 'preparing_sound_played' not in st.session_state:
     st.session_state.preparing_sound_played = None  # order_id that we already played preparing sound for
+if 'order_success_sound_played' not in st.session_state:
+    st.session_state.order_success_sound_played = None  # order_id that we already played "order ပို့ပြီး" sound for
 if 'collapse_sidebar_after_login' not in st.session_state:
     st.session_state.collapse_sidebar_after_login = False  # login ပြီးရင် sidebar auto collapse
 if 'sidebar_collapsed_on_load' not in st.session_state:
@@ -1024,7 +1033,19 @@ def main():
                         edit_subtitle = st.text_input("Subtitle", value=current_store.get('subtitle', 'Food & Drinks'))
                         edit_bg_color = st.color_picker("Background Color", value=current_store.get('bg_color', '#ffffff') or '#ffffff')
                         edit_bg_counter = st.checkbox("Counter Dashboard မှာလည်း Background ပြောင်းမယ်", value=current_store.get('bg_counter', False))
+                        st.markdown("**နောက်ခံပုံ (Desktop ကနေ ချိန်းမယ်):**")
+                        edit_bg_image_file = st.file_uploader("ပုံရွေးပါ (PNG, JPG, WebP)", type=["png", "jpg", "jpeg", "webp"], key="bg_image_upload", help="ပုံကြီးရင် ၅၀၀KB အောက် ရွေးပါ")
+                        edit_bg_image_clear = st.checkbox("နောက်ခံပုံ ဖယ်မယ် (အရောင်ပဲ သုံးမယ်)", value=False, key="bg_image_clear")
+                        if current_store.get('bg_image'):
+                            st.caption("လက်ရှိ နောက်ခံပုံ ထည့်ထားပြီး။ အသစ်ရွေးရင် အစားထိုးမယ်။")
                         edit_active = st.checkbox("ဆိုင်ဖွင့်မည် (Active)", value=current_store.get('active', True), help="ပိတ်ထားရင် ဆိုင်က စာရင်းမှာ ပိတ်ထားသလို ပြမယ်")
+                        st.markdown("**စားပွဲနံပါတ် ပုံစံ:**")
+                        _fmt_opts = ["ဂဏန်းပဲ (1, 2, 3...)", "က္ခရာပဲ (A, B, C...)", "နှစ်မျိုးလုံး (ဂဏန်း + အက္ခရာ)"]
+                        _fmt_vals = ["numbers", "letters", "both"]
+                        _fmt_current = current_store.get('table_number_format') or 'numbers'
+                        _fmt_idx = _fmt_vals.index(_fmt_current) if _fmt_current in _fmt_vals else 0
+                        edit_table_number_format = st.selectbox("စားပွဲနံပါတ်", _fmt_opts, index=_fmt_idx, key="table_fmt_sel")
+                        edit_table_number_format_val = _fmt_vals[_fmt_opts.index(edit_table_number_format)]
                         edit_header_payload = {}
                         if st.session_state.get('is_super_admin'):
                             st.divider()
@@ -1098,15 +1119,47 @@ def main():
                             edit_header_payload['category_box_bg_end'] = edit_cat_bg_end
                             edit_header_payload['category_box_font_color'] = edit_cat_font_color
                         if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
+                            # နောက်ခံပုံ — ဖယ်မယ် / အသစ်ရွေးထား / လက်ရှိအတိုင်း
+                            if edit_bg_image_clear:
+                                new_bg_image = ''
+                            elif edit_bg_image_file is not None:
+                                data = edit_bg_image_file.read()
+                                mime = edit_bg_image_file.type or 'image/jpeg'
+                                if HAS_PIL and data:
+                                    try:
+                                        img = Image.open(BytesIO(data))
+                                        if img.mode in ('RGBA', 'P'):
+                                            img = img.convert('RGB')
+                                        out = BytesIO()
+                                        try:
+                                            r = getattr(Image, 'Resampling', None)
+                                            resample = r.LANCZOS if r else Image.LANCZOS
+                                        except Exception:
+                                            resample = 1
+                                        img.thumbnail((1200, 1200), resample)
+                                        img.save(out, 'JPEG', quality=82, optimize=True)
+                                        data = out.getvalue()
+                                        mime = 'image/jpeg'
+                                    except Exception:
+                                        pass
+                                b64 = base64.b64encode(data).decode('utf-8')
+                                if len(b64) > 900000:
+                                    st.warning("ပုံကြီးလို့ သိမ်းမရပါ။ ပုံသေးအောင် ချုံ့ပြီး ထပ်ရွေးပါ။")
+                                    new_bg_image = current_store.get('bg_image', '')
+                                else:
+                                    new_bg_image = f"data:{mime};base64,{b64}"
+                            else:
+                                new_bg_image = current_store.get('bg_image', '')
                             payload = {
                                 'store_name': edit_store_name.strip(),
                                 'admin_key': edit_admin_key.strip(),
                                 'logo': current_store.get('logo', '☕'),
                                 'subtitle': edit_subtitle.strip() or 'Food & Drinks',
                                 'bg_color': edit_bg_color if edit_bg_color != "#ffffff" else '',
-                                'bg_image': current_store.get('bg_image', ''),
+                                'bg_image': new_bg_image,
                                 'bg_counter': edit_bg_counter,
-                                'active': edit_active
+                                'active': edit_active,
+                                'table_number_format': edit_table_number_format_val
                             }
                             payload.update(edit_header_payload)
                             update_store(db, current_store['store_id'], payload)
@@ -1604,12 +1657,24 @@ def main():
     
     # Menu View
     
-    # Apply background (အရောင်ပဲ — ပုံ မသုံးပါ)
+    # Apply background (အရောင် + နောက်ခံပုံ ချိန်းထားရင် ပြ)
     bg_color = current_store.get('bg_color', '') or '#e8edd5'  # default: light greenish-yellow
+    bg_image = (current_store.get('bg_image') or '').strip()
+    bg_image_css = ''
+    if bg_image and bg_image.startswith('data:'):
+        # CSS url() ထဲ ထည့်ရင် " နဲ့ \ escape
+        bg_esc = bg_image.replace('\\', '\\\\').replace('"', '\\"')
+        bg_image_css = f"""
+        background-image: url("{bg_esc}") !important;
+        background-size: cover !important;
+        background-position: center !important;
+        background-attachment: fixed !important;
+        """
     st.markdown(f"""
     <style>
     .stApp {{
         background-color: {bg_color} !important;
+        {bg_image_css}
         padding-top: 0 !important;
     }}
     [data-testid="stAppViewContainer"] {{
@@ -1617,6 +1682,7 @@ def main():
     }}
     [data-testid="stSidebar"] > div:first-child {{
         background-color: {bg_color} !important;
+        {bg_image_css}
     }}
     header[data-testid="stHeader"], [data-testid="stHeader"], header {{
         background-color: {bg_color} !important;
@@ -1725,11 +1791,11 @@ def main():
         adjusted_total = order_doc.get('adjusted_total') if order_doc else None
         display_total = int(adjusted_total) if adjusted_total is not None else order_info['total']
         
-        # Customer order status စစ်ဖို့ refresh — preparing ဆိုရင် ခဏခဏ မလုပ်အောင် interval ကြာပါမယ်
+        # Customer order status စစ်ဖို့ refresh — pending မှာ ၆ စက္ကန့် (Admin Complete မြန်မြန် ပြန့်အောင်)
         if order_status == 'pending':
-            st_autorefresh(interval=5000, limit=None, key="customer_order_track")
+            st_autorefresh(interval=6000, limit=None, key="customer_order_track")  # ၆ စက္ကန့်
         elif order_status == 'preparing':
-            st_autorefresh(interval=20000, limit=None, key="customer_order_track")  # ၂၀ စက္ကန့် တစ်ခါ (အသံမထပ်အောင်)
+            st_autorefresh(interval=20000, limit=None, key="customer_order_track")
         
         # အနီရောင် noti ဖယ်ထား — မရနိုင်သတင်းက အဝါ box ထဲမှာပဲ ပြီးသား
         # စိမ်းရောင် "Order ပို့ပြီးပါပြီ!" box - pending ပဲ ပြ။ preparing/completed ရောက်ရင် မပြ (စုစုပေါင်း = adjusted ရှိရင် ပြ)
@@ -1742,11 +1808,8 @@ def main():
                     <span style="font-size: 1.8em;">✅</span>
                     <span style="color: #fff; font-size: 1.5em; font-weight: bold;">Order ပို့ပြီးပါပြီ!</span>
                 </div>
-                <div style="color: #fff; font-size: 1.2em; opacity: 0.95;">
-                    Order #{order_info['order_id']}
-                </div>
-                <div style="color: #fff; font-size: 1em; opacity: 0.9; margin-top: 10px;">
-                    🪑 စားပွဲ: {order_info['table_no']} | 💰 {format_price(display_total)} Ks
+                <div style="color: #fff; font-size: 1em; opacity: 0.95; margin-top: 8px;">
+                    🪑 table: {order_info['table_no']} &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp; amount: {format_price(display_total)} Ks
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1796,30 +1859,63 @@ def main():
                 <div style="color: #fff; font-size: 1.2em; font-weight: bold;">✅ ပြီးပါပြီ။ ကျေးဇူးတင်ပါတယ်။</div>
             </div>
             """, unsafe_allow_html=True)
+            # Admin Complete နှိပ်ပြီး customer ဘက် noti သံ — တစ်ကြိမ်ပဲ (localStorage)
+            oid_complete = order_info['order_id']
+            components.html(f"""
+                <script>
+                    (function(){{
+                        var key = 'completed_sound_' + {json.dumps(oid_complete)};
+                        if (window.localStorage && localStorage.getItem(key)) return;
+                        if (window.localStorage) localStorage.setItem(key, '1');
+                        var ac = new (window.AudioContext || window.webkitAudioContext)();
+                        function beep(freq, dur, delay) {{
+                            setTimeout(function() {{
+                                var o = ac.createOscillator();
+                                var g = ac.createGain();
+                                o.connect(g); g.connect(ac.destination);
+                                o.frequency.value = freq;
+                                o.type = 'sine';
+                                g.gain.setValueAtTime(0.28, ac.currentTime);
+                                g.gain.exponentialRampToValueAtTime(0.01, ac.currentTime + dur);
+                                o.start(ac.currentTime);
+                                o.stop(ac.currentTime + dur);
+                            }}, delay);
+                        }}
+                        beep(1047, 0.15, 0);
+                        beep(880, 0.15, 120);
+                        beep(659, 0.25, 240);
+                    }})();
+                </script>
+            """, height=0)
         
-        # Play success sound
+        # Noti သံ fallback — rerun ကြောင့် submit run က အသံမပါသွားရင် ပထမဆုံး ကလစ်တဲ့အခါ မြည်အောင်
         components.html("""
         <script>
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            function playBeep(freq, duration, delay) {
-                setTimeout(() => {
-                    const oscillator = audioContext.createOscillator();
-                    const gainNode = audioContext.createGain();
-                    oscillator.connect(gainNode);
-                    gainNode.connect(audioContext.destination);
-                    oscillator.frequency.value = freq;
-                    oscillator.type = 'sine';
-                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
-                    oscillator.start(audioContext.currentTime);
-                    oscillator.stop(audioContext.currentTime + duration);
-                }, delay);
-            }
-            // Success melody
-            playBeep(523, 0.15, 0);
-            playBeep(659, 0.15, 150);
-            playBeep(784, 0.15, 300);
-            playBeep(1047, 0.3, 450);
+            (function(){
+                function playOnce() {
+                    var ac = new (window.AudioContext || window.webkitAudioContext)();
+                    if (ac.state === 'suspended') ac.resume();
+                    function beep(freq, dur, delay) {
+                        setTimeout(function() {
+                            var o = ac.createOscillator();
+                            var g = ac.createGain();
+                            o.connect(g); g.connect(ac.destination);
+                            o.frequency.value = freq; o.type = 'sine';
+                            g.gain.setValueAtTime(0.25, ac.currentTime);
+                            g.gain.exponentialRampToValueAtTime(0.01, ac.currentTime + dur);
+                            o.start(ac.currentTime); o.stop(ac.currentTime + dur);
+                        }, delay);
+                    }
+                    beep(523, 0.15, 0);
+                    beep(659, 0.15, 150);
+                    beep(784, 0.15, 300);
+                    beep(1047, 0.3, 450);
+                    document.removeEventListener('click', playOnce);
+                    document.removeEventListener('touchstart', playOnce);
+                }
+                document.addEventListener('click', playOnce, { once: true });
+                document.addEventListener('touchstart', playOnce, { once: true });
+            })();
         </script>
         """, height=0)
         
@@ -1846,10 +1942,10 @@ def main():
             st.session_state.last_order_id = None
         elif status == 'preparing':
             load_orders.clear()
-            st_autorefresh(interval=20000, limit=None, key="customer_preparing_refresh")  # ၂၀ စက္ကန့် တစ်ခါ
+            st_autorefresh(interval=20000, limit=None, key="customer_preparing_refresh")
         elif status == 'pending':
             load_orders.clear()
-            st_autorefresh(interval=5000, limit=None, key="customer_preparing_refresh")
+            st_autorefresh(interval=6000, limit=None, key="customer_preparing_refresh")  # ၆ စက္ကန့် (Complete မြန်မြန် ပြန့်အောင်)
     
     categories = load_categories(db_id, store_id)
     items = load_menu_items(db_id, store_id)
@@ -2187,19 +2283,8 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        # Table Number
-        if not st.session_state.table_no:
-            table_no = st.text_input("🪑 စားပွဲနံပါတ် ထည့်ပါ", placeholder="ဥပမာ: 5", key="table_input")
-            st.session_state.table_no = table_no
-        else:
-            st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
-        
-        # ============================================
-        # ADJACENT BUTTONS (Cart Clear & Order) - ဘောင်ကပ်လျက်ပြ, ဘယ်ဘက်
-        # ============================================
-        # Marker div to identify these buttons
+        # ခလုတ်များ ဦးစွာပြ (order_submit ရအောင်) → ပြီးမှ process → ပို့ပြီး အသံ ထွက်အောင် မပြန်တင်ဘဲ ပြမယ်
         st.markdown('<div class="cart-order-marker"></div>', unsafe_allow_html=True)
-        
         cart_col, order_col, empty_col = st.columns([1, 1, 1])
         with cart_col:
             cart_clear = st.button("🗑️ Cart ရှင်းမည်", use_container_width=True, key="cart_clear_btn")
@@ -2208,37 +2293,93 @@ def main():
         with empty_col:
             st.empty()
         
+        # Process: Order ပို့ပြီး အသံ ထွက်အောင် ဒီ run မှာပဲြပြီး မပြန်တင်ဘူး (browser autoplay အတွက်)
+        if order_submit and st.session_state.table_no and current_store:
+            items_str = " | ".join([f"{item['name']} x{item['qty']}" for item in st.session_state.cart])
+            with st.spinner("📤 Order ပို့နေပါသည်..."):
+                order_id = save_order(db, current_store['store_id'], {
+                    'table_no': st.session_state.table_no,
+                    'items': items_str,
+                    'total': str(total)
+                })
+            st.session_state.order_success = {
+                'order_id': order_id,
+                'table_no': st.session_state.table_no,
+                'total': total,
+                'items': items_str
+            }
+            st.session_state.last_order_id = order_id
+            st.session_state.cart = []
+            components.html("""
+            <script>
+                (function(){
+                    var ac = new (window.AudioContext || window.webkitAudioContext)();
+                    function beep(freq, dur, delay) {
+                        setTimeout(function() {
+                            var o = ac.createOscillator();
+                            var g = ac.createGain();
+                            o.connect(g); g.connect(ac.destination);
+                            o.frequency.value = freq; o.type = 'sine';
+                            g.gain.setValueAtTime(0.3, ac.currentTime);
+                            g.gain.exponentialRampToValueAtTime(0.01, ac.currentTime + dur);
+                            o.start(ac.currentTime); o.stop(ac.currentTime + dur);
+                        }, delay);
+                    }
+                    beep(523, 0.15, 0);
+                    beep(659, 0.15, 150);
+                    beep(784, 0.15, 300);
+                    beep(1047, 0.3, 450);
+                })();
+            </script>
+            """, height=0)
+            st.balloons()
+        elif order_submit and not st.session_state.table_no:
+            st.error("⚠️ စားပွဲနံပါတ် ထည့်ပါ")
+        elif order_submit and not current_store:
+            st.error("⚠️ ဆိုင်ရွေးပါ")
+        
         if cart_clear:
             st.session_state.cart = []
             st.rerun()
         
-        if order_submit:
-            if not st.session_state.table_no:
-                st.error("⚠️ စားပွဲနံပါတ် ထည့်ပါ")
-            elif not current_store:
-                st.error("⚠️ ဆိုင်ရွေးပါ")
-            else:
-                # Save order - FAST with Firebase!
-                items_str = " | ".join([f"{item['name']} x{item['qty']}" for item in st.session_state.cart])
-                
-                with st.spinner("📤 Order ပို့နေပါသည်..."):
-                    order_id = save_order(db, current_store['store_id'], {
-                        'table_no': st.session_state.table_no,
-                        'items': items_str,
-                        'total': str(total)
-                    })
-                
-                # Save order success info for alert
-                st.session_state.order_success = {
-                    'order_id': order_id,
-                    'table_no': st.session_state.table_no,
-                    'total': total,
-                    'items': items_str
-                }
-                st.session_state.last_order_id = order_id  # For "preparing" notification when admin updates
-                st.session_state.cart = []
-                st.balloons()
+        # ပို့ပြီးပြီဆိုရင် ဒီ run မှာပဲ success box ပြ (မပြန်တင်လို့ အသံပါ ထွက်မယ်)
+        if st.session_state.order_success:
+            oi = st.session_state.order_success
+            # စာမျက်နှာ ပြန်တင်အောင် ထားရမယ် — နောက် run မှာ အပေါ်က block က Preparing/Complete ပြမယ်
+            st_autorefresh(interval=6000, limit=None, key="customer_cart_order_track")
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); 
+                        padding: 25px; border-radius: 15px; text-align: center; margin: 20px 0;
+                        box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);">
+                <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px;">
+                    <span style="font-size: 1.8em;">✅</span>
+                    <span style="color: #fff; font-size: 1.5em; font-weight: bold;">Order ပို့ပြီးပါပြီ!</span>
+                </div>
+                <div style="color: #fff; font-size: 1em; opacity: 0.95; margin-top: 8px;">
+                    🪑 table: {oi['table_no']} &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp; amount: {format_price(oi['total'])} Ks
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("🍽️ ထပ်မှာမည်", use_container_width=True, type="primary", key="dismiss_order_btn"):
+                st.session_state.order_success = None
                 st.rerun()
+        else:
+            # မပို့သေးရင် စားပွဲနံပါတ် ထည့်စရာ ပြ
+            table_fmt = (current_store or {}).get('table_number_format') or 'numbers'
+            if not st.session_state.table_no:
+                if table_fmt == 'numbers':
+                    label, placeholder = "🪑 စားပွဲနံပါတ် ထည့်ပါ (ဂဏန်းပဲ)", "ဥပမာ: 5"
+                    allowed = lambda s: "".join(c for c in (s or "") if c.isdigit())
+                elif table_fmt == 'letters':
+                    label, placeholder = "🪑 စားပွဲနံပါတ် ထည့်ပါ (က္ခရာပဲ)", "ဥပမာ: A, B, C"
+                    allowed = lambda s: "".join(c for c in (s or "") if c.isalpha())
+                else:
+                    label, placeholder = "🪑 စားပွဲနံပါတ် ထည့်ပါ", "ဥပမာ: 5 သို့ A"
+                    allowed = lambda s: "".join(c for c in (s or "") if c.isalnum())
+                table_raw = st.text_input(label, placeholder=placeholder, key="table_input")
+                st.session_state.table_no = allowed(table_raw)
+            else:
+                st.info(f"🪑 စားပွဲနံပါတ်: **{st.session_state.table_no}**")
     
     # Footer - only show for admin
     if st.session_state.is_admin:
