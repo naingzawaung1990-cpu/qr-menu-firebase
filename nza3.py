@@ -50,10 +50,10 @@ def get_firebase_connection():
             except:
                 pass  # No secrets, try local file
             
-            # Use local credentials file
+            # Use local credentials file or path from env (e.g. Render Secret File)
             if not initialized:
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                creds_path = os.path.join(script_dir, "firebase_credentials.json")
+                creds_path = os.environ.get("FIREBASE_CREDENTIALS_PATH") or os.path.join(script_dir, "firebase_credentials.json")
                 
                 if not os.path.exists(creds_path):
                     st.error(f"❌ firebase_credentials.json မတွေ့ပါ: {creds_path}")
@@ -158,7 +158,8 @@ def update_store(db, store_id, new_data):
     if 'active' in new_data:
         upd['active'] = new_data['active']
     for key in ('header_title_font_style', 'header_title_font_size', 'header_title_color',
-                'header_subtitle_font_style', 'header_subtitle_font_size', 'header_subtitle_color'):
+                'header_subtitle_font_style', 'header_subtitle_font_size', 'header_subtitle_color',
+                'category_box_bg_start', 'category_box_bg_end', 'category_box_font_color'):
         if key in new_data:
             upd[key] = new_data[key]
     db.collection('stores').document(store_id).update(upd)
@@ -487,6 +488,8 @@ if 'editing_store' not in st.session_state:
     st.session_state.editing_store = None
 if 'confirm_delete_store' not in st.session_state:
     st.session_state.confirm_delete_store = None
+if 'sa_confirm_delete' not in st.session_state:
+    st.session_state.sa_confirm_delete = None
 if 'cart' not in st.session_state:
     st.session_state.cart = []
 if 'view_mode' not in st.session_state:
@@ -978,8 +981,8 @@ def main():
                     # Online QR only (offline QR ဖြုတ်ပြီး)
                     base_url = st.text_input(
                         "App URL",
-                        value="https://qr-menu-firebase-cex4wc3ghyukqngnhhr7r2.streamlit.app",
-                        help="Streamlit Cloud URL ထည့်ပါ"
+                        value="https://naingzawaung1990-cpu.github.io/menu-link",
+                        help="ကိုယ့်လင့် (သို့) Streamlit Cloud URL ထည့်ပါ — ကိုယ့်လင့်သုံးရင် ပျက်ရင် backup ပြောင်းလို့ရမယ်"
                     )
                     qr_table = st.text_input("စားပွဲနံပါတ် (optional)", placeholder="5")
                     if qr_table:
@@ -1053,6 +1056,18 @@ def main():
                                 ("Masterpiece Uni Sans", "Masterpiece Uni Sans, sans-serif"),
                                 ("Yunghkio", "Yunghkio, sans-serif"),
                                 ("Myanmar Text", "Myanmar Text, sans-serif"),
+                                ("— Ayar မြန်မာ (လှသော) —", "sans-serif"),
+                                ("Ayar", "Ayar, sans-serif"),
+                                ("Ayar Takhu", "Ayar Takhu, sans-serif"),
+                                ("Ayar Kasone", "Ayar Kasone, sans-serif"),
+                                ("Ayar Nayon", "Ayar Nayon, sans-serif"),
+                                ("Ayar Wazo", "Ayar Wazo, sans-serif"),
+                                ("Ayar Wagaung", "Ayar Wagaung, sans-serif"),
+                                ("Ayar Tathalin", "Ayar Tathalin, sans-serif"),
+                                ("Ayar Thidingyut", "Ayar Thidingyut, sans-serif"),
+                                ("Ayar Tanzaungmone", "Ayar Tanzaungmone, sans-serif"),
+                                ("Ayar Juno", "Ayar Juno, sans-serif"),
+                                ("Ayar Typewriter", "Ayar Typewriter, sans-serif"),
                             ]
                             _font_labels = [x[0] for x in _font_opts]
                             _font_vals = [x[1] for x in _font_opts]
@@ -1074,6 +1089,14 @@ def main():
                                 'header_subtitle_font_size': (edit_subtitle_font_size or '1.5em').strip(),
                                 'header_subtitle_color': edit_subtitle_color,
                             }
+                            st.divider()
+                            st.markdown("**အမျိုးအစား box နဲ့ စာရောင်**")
+                            edit_cat_bg_start = st.color_picker("အမျိုးအစား box နောက်ခံ (စရောင်)", value=current_store.get('category_box_bg_start') or COLORS["category_bg_start"], key="cat_bg_start")
+                            edit_cat_bg_end = st.color_picker("အမျိုးအစား box နောက်ခံ (ဆုံးရောင်)", value=current_store.get('category_box_bg_end') or COLORS["category_bg_end"], key="cat_bg_end")
+                            edit_cat_font_color = st.color_picker("အမျိုးအစား box စာရောင်", value=current_store.get('category_box_font_color') or '#ffffff', key="cat_font_color")
+                            edit_header_payload['category_box_bg_start'] = edit_cat_bg_start
+                            edit_header_payload['category_box_bg_end'] = edit_cat_bg_end
+                            edit_header_payload['category_box_font_color'] = edit_cat_font_color
                         if st.form_submit_button("💾 သိမ်းမည်", use_container_width=True):
                             payload = {
                                 'store_name': edit_store_name.strip(),
@@ -1087,6 +1110,13 @@ def main():
                             }
                             payload.update(edit_header_payload)
                             update_store(db, current_store['store_id'], payload)
+                            clear_all_cache()
+                            # သိမ်းပြီးနောက် store ကို ပြန်ယူပြီး session မှာ ထည့်မယ် — ခေါင်းစဉ် ပြောင်းလဲမှု ချက်ချင်းပြမယ်
+                            stores_after = load_stores(db_id)
+                            for s in stores_after:
+                                if s.get('store_id') == current_store['store_id']:
+                                    st.session_state.current_store = s
+                                    break
                             st.success("✅ ပြင်ဆင်ပြီးပါပြီ")
                             st.rerun()
                     
@@ -1193,6 +1223,7 @@ def main():
             s['_today_orders'] = day['order_count'] if day else 0
             total_sales_today += s['_today_total']
             total_orders_today += s['_today_orders']
+
         c1, c2, c3 = st.columns(3)
         with c1:
             st.metric("စုစုပေါင်း ဆိုင်", len(all_stores))
@@ -1201,7 +1232,28 @@ def main():
         with c3:
             st.metric("ယနေ့ စုစုပေါင်း ရောင်းရငွေ", f"{total_sales_today:,.0f} Ks")
         st.divider()
-        for s in all_stores:
+
+        # စာရင်း စီ/ရှာပြီး ပြခြင်း
+        sa_search = st.text_input("🔍 ဆိုင်ရှာရန် (အမည် / Store ID)", placeholder="ရိုက်ထည့်ပါ...", key="sa_search")
+        sa_sort = st.selectbox(
+            "စီမံရန်",
+            ["ဆိုင်အမည်အလိုက်", "ယနေ့ ရောင်းရငွေ များစွာ", "ယနေ့ Order များစွာ", "ဖွင့်ထားသော ဆိုင်ရင် အရင်"],
+            key="sa_sort"
+        )
+        filtered = all_stores
+        if sa_search and sa_search.strip():
+            q = sa_search.strip().lower()
+            filtered = [s for s in all_stores if q in (s.get('store_name') or '').lower() or q in (s.get('store_id') or '').lower()]
+        if sa_sort == "ဆိုင်အမည်အလိုက်":
+            filtered = sorted(filtered, key=lambda s: (s.get('store_name') or '').lower())
+        elif sa_sort == "ယနေ့ ရောင်းရငွေ များစွာ":
+            filtered = sorted(filtered, key=lambda s: s.get('_today_total', 0), reverse=True)
+        elif sa_sort == "ယနေ့ Order များစွာ":
+            filtered = sorted(filtered, key=lambda s: s.get('_today_orders', 0), reverse=True)
+        elif sa_sort == "ဖွင့်ထားသော ဆိုင်ရင် အရင်":
+            filtered = sorted(filtered, key=lambda s: (not s.get('active', True), (s.get('store_name') or '').lower()))
+
+        for s in filtered:
             is_active = s.get('active', True)
             label = f"{s['store_name']} ({s['store_id']}) {'🟢' if is_active else '🔴'}"
             with st.expander(label, expanded=False):
@@ -1210,36 +1262,55 @@ def main():
                 st.text(f"Password: {pw}")
                 st.text(f"Active: {'ဖွင့်ထား' if is_active else 'ပိတ်ထား'}")
                 st.text(f"ယနေ့ ရောင်းရငွေ: {s['_today_total']:,.0f} Ks | ယနေ့ Order: {s['_today_orders']}")
-                btn_edit, btn_qr, btn_toggle = st.columns(3)
-                with btn_edit:
-                    if st.button("ပြင်မည်", key=f"sa_edit_{s['store_id']}", use_container_width=True):
-                        st.session_state.current_store = s
-                        st.session_state.view_mode = 'menu'
-                        load_stores.clear()
-                        st.rerun()
-                with btn_qr:
-                    if st.button("QR", key=f"sa_qr_{s['store_id']}", use_container_width=True):
-                        st.session_state.current_store = s
-                        st.session_state.view_mode = 'menu'
-                        load_stores.clear()
-                        st.rerun()
-                with btn_toggle:
-                    toggle_label = "ပိတ်မည်" if is_active else "ဖွင့်မည်"
-                    if st.button(toggle_label, key=f"sa_toggle_{s['store_id']}", use_container_width=True):
-                        update_store(db, s['store_id'], {
-                            'store_name': s['store_name'],
-                            'admin_key': s.get('admin_key', ''),
-                            'logo': s.get('logo', '☕'),
-                            'subtitle': s.get('subtitle', ''),
-                            'bg_color': s.get('bg_color', ''),
-                            'bg_image': s.get('bg_image', ''),
-                            'bg_counter': s.get('bg_counter', False),
-                            'active': not is_active
-                        })
-                        load_stores.clear()
-                        st.rerun()
+                if st.session_state.get('sa_confirm_delete') == s['store_id']:
+                    st.warning(f"'{s['store_name']}' ကို ဖျက်မှာ သေချာပါသလား? (ဆိုင်နဲ့ data အားလုံး ပျက်သွားပါမည်)")
+                    col_yes, col_no = st.columns(2)
+                    with col_yes:
+                        if st.button("✅ ဟုတ်ကဲ့ ဖျက်မည်", key=f"sa_del_yes_{s['store_id']}", use_container_width=True, type="primary"):
+                            delete_store(db, s['store_id'])
+                            st.session_state.sa_confirm_delete = None
+                            st.rerun()
+                    with col_no:
+                        if st.button("❌ မဖျက်တော့ပါ", key=f"sa_del_no_{s['store_id']}", use_container_width=True):
+                            st.session_state.sa_confirm_delete = None
+                            st.rerun()
+                else:
+                    btn_edit, btn_qr, btn_toggle, btn_del = st.columns(4)
+                    with btn_edit:
+                        if st.button("ပြင်မည်", key=f"sa_edit_{s['store_id']}", use_container_width=True):
+                            st.session_state.current_store = s
+                            st.session_state.view_mode = 'menu'
+                            load_stores.clear()
+                            st.rerun()
+                    with btn_qr:
+                        if st.button("QR", key=f"sa_qr_{s['store_id']}", use_container_width=True):
+                            st.session_state.current_store = s
+                            st.session_state.view_mode = 'menu'
+                            load_stores.clear()
+                            st.rerun()
+                    with btn_toggle:
+                        toggle_label = "ပိတ်မည်" if is_active else "ဖွင့်မည်"
+                        if st.button(toggle_label, key=f"sa_toggle_{s['store_id']}", use_container_width=True):
+                            update_store(db, s['store_id'], {
+                                'store_name': s['store_name'],
+                                'admin_key': s.get('admin_key', ''),
+                                'logo': s.get('logo', '☕'),
+                                'subtitle': s.get('subtitle', ''),
+                                'bg_color': s.get('bg_color', ''),
+                                'bg_image': s.get('bg_image', ''),
+                                'bg_counter': s.get('bg_counter', False),
+                                'active': not is_active
+                            })
+                            load_stores.clear()
+                            st.rerun()
+                    with btn_del:
+                        if st.button("🗑️ ဖျက်မည်", key=f"sa_del_{s['store_id']}", use_container_width=True):
+                            st.session_state.sa_confirm_delete = s['store_id']
+                            st.rerun()
         if not all_stores:
             st.info("ဆိုင်မရှိသေးပါ။ Menu view သို့သွားပြီး ဆိုင်အသစ်ထည့်ပါ။")
+        elif sa_search and sa_search.strip() and not filtered:
+            st.warning("ရှာတွေ့ခြင်း မရှိပါ။")
         return
     
     if not current_store:
@@ -1553,10 +1624,16 @@ def main():
     .block-container {{
         padding-top: 0.5rem !important;
         max-width: 100%;
+        overflow: visible !important;
     }}
+    [data-testid="stMarkdown"]:has(.header-wrapper-outer) {{ overflow: visible !important; max-width: none !important; }}
     </style>
     """, unsafe_allow_html=True)
     
+    # မြန်မာဖောင့် ပြောင်းလို့ရအောင် Google Fonts မှ သွင်း (Noto Sans Myanmar, Padauk) — စက်မှာ မထည့်ထားလည်း ပြောင်းမယ်
+    st.markdown("""
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Myanmar:wght@400;700&family=Padauk:wght@400;700&display=swap" rel="stylesheet">
+    """, unsafe_allow_html=True)
     # ဆိုင်ပုံ/logoပြပါ — ဆိုင်အမည်နဲ့ subtitle ပဲ ပြ (Super Admin က ပြင်ထားတဲ့ font/size/color သုံး)
     _tit_font = current_store.get('header_title_font_style') or 'sans-serif'
     _tit_size = current_store.get('header_title_font_size') or '3em'
@@ -1566,16 +1643,40 @@ def main():
     _sub_color = current_store.get('header_subtitle_color') or COLORS["header_subtitle"]
     st.markdown(f"""
     <style>
+    /* ခေါင်းစဉ် ဖြတ်မပြအောင် Streamlit content width ကို ကျော်ပြီး viewport အပြည့် နေရာယူ */
+    .header-wrapper-outer {{
+        width: 100vw;
+        position: relative;
+        left: 50%;
+        right: 50%;
+        margin-left: -50vw !important;
+        margin-right: -50vw !important;
+        overflow: visible !important;
+        box-sizing: border-box;
+    }}
     .header-container {{
         text-align: center;
-        padding: 8px 0 10px 0;
+        padding: 14px 0 12px 0;
+        width: 100%;
+        max-width: 100%;
+        overflow: visible !important;
+        box-sizing: border-box;
     }}
+    /* မြန်မာစာ အမြင့်သရ/အမှတ် မဖြတ်အောင် line-height နဲ့ padding */
     .header-title {{
         font-family: {_tit_font};
         font-size: {_tit_size};
         font-weight: bold;
         color: {_tit_color};
         margin: 10px 0 5px 0;
+        white-space: normal;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        overflow: visible !important;
+        max-width: 100%;
+        line-height: 1.5 !important;
+        padding-top: 0.2em;
+        padding-bottom: 0.1em;
     }}
     .header-subtitle {{
         font-family: {_sub_font};
@@ -1583,11 +1684,14 @@ def main():
         font-weight: bold;
         color: {_sub_color};
         letter-spacing: 3px;
+        line-height: 1.4;
     }}
     </style>
-    <div class="header-container">
-        <div class="header-title">{html.escape(current_store['store_name'])}</div>
-        <div class="header-subtitle">{html.escape(current_store.get('subtitle', 'Food & Drinks'))}</div>
+    <div class="header-wrapper-outer">
+        <div class="header-container">
+            <div class="header-title">{html.escape(current_store['store_name'])}</div>
+            <div class="header-subtitle">{html.escape(current_store.get('subtitle', 'Food & Drinks'))}</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1760,11 +1864,14 @@ def main():
     if not items and not categories:
         st.info("ℹ️ ပစ္စည်းမရှိသေးပါ။ Admin Login ဝင်ပြီး ထည့်ပါ။")
     else:
+        _cat_bg_start = current_store.get('category_box_bg_start') or COLORS["category_bg_start"]
+        _cat_bg_end = current_store.get('category_box_bg_end') or COLORS["category_bg_end"]
+        _cat_font_color = current_store.get('category_box_font_color') or '#ffffff'
         st.markdown(f"""
         <style>
         .cat-header {{
-            background: linear-gradient(135deg, {COLORS["category_bg_start"]} 0%, {COLORS["category_bg_end"]} 100%);
-            color: #fff;
+            background: linear-gradient(135deg, {_cat_bg_start} 0%, {_cat_bg_end} 100%);
+            color: {_cat_font_color};
             text-align: center;
             padding: 10px 20px;
             border-radius: 20px;
